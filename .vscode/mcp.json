@@ -1,0 +1,47 @@
+{
+  "servers": {
+    "MongoDB-6": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mongodb-mcp-server",
+        "--connectionString",
+        "mongodb://110.172.21.62:2717/",
+        "--read-only"
+
+      ]
+    },
+    "mcp-clickhouse-6": {
+      "command": "python",
+      "args": [
+        "-m",
+        "mcp_clickhouse.main"
+      ],
+      "env": {
+        "CLICKHOUSE_HOST": "110.172.21.62",
+        "CLICKHOUSE_PORT": "8123",
+        "CLICKHOUSE_USER": "default",
+        "CLICKHOUSE_PASSWORD": "Maxspike#2609",
+        "CLICKHOUSE_SECURE": "false",
+        "CLICKHOUSE_VERIFY": "false",
+        "CLICKHOUSE_CONNECT_TIMEOUT": "30",
+        "CLICKHOUSE_SEND_RECEIVE_TIMEOUT": "30",
+        "READONLY": "true"
+      }
+    },
+
+    
+
+     "redis-pub-sub": {
+    "command": "npx",
+    "args": ["redis-mcp", "--redis-host", "110.172.21.62", "--redis-port", "6383"]
+  },
+
+
+     "redis-zerodha": {
+    "command": "npx",
+    "args": ["redis-mcp", "--redis-host", "110.172.21.62", "--redis-port", "2727"]
+  }
+
+  }
+}
