@@ -1,41 +1,51 @@
 # Payoff Engine - C++ Backend Implementation Progress
 
-## Current Task
-Implement C++ backend features with test scripts (NO PYTHON - C++ only):
-- API Layer with cpp-httplib REST endpoints
-- WebSocket for live streaming
-- ClickHouse data source (complete implementation)
-- Kite API integration
-- Test suite for all features
+## Current Status: Code Complete - Needs Compiler Setup
 
-## Test Instrument
-- Symbol: NIFTY Jan FUT
-- Price: 26300
-- Multi-client support required
+### Compiler Setup Required
+MSYS2 is installed at `C:\msys64` but g++ is not yet installed.
 
-## Environment (.env)
-- ClickHouse: 110.172.21.62:8123, tick_data_db
+**To install GCC (MUST use MSYS2 MINGW64 terminal, not PowerShell):**
+1. Open Start Menu → Search "MSYS2 MINGW64" → Run it
+2. In the MINGW64 terminal (yellow/orange icon), run:
+   ```bash
+   pacman -Syu
+   pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+   ```
+3. Then build from PowerShell:
+   ```powershell
+   $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+   cd cpp; cmake -B build -G "MinGW Makefiles"
+   cmake --build build
+   ```
+
+## GAP ANALYSIS - Completed January 4, 2026
+
+### ✅ FULLY IMPLEMENTED
+1. **Config System** - config.hpp loads .env correctly
+2. **Black-Scholes Pricing** - Complete with norm_cdf, d1/d2
+3. **Greeks Calculation** - Delta, Gamma, Theta, Vega, Rho
+4. **IV Calculation** - Newton-Raphson with Brenner-Subrahmanyam initial guess
+5. **Payoff Calculator** - Strategies, curves, breakevens, scenarios
+6. **REST API Server** - Full endpoints for payoff, greeks, sensitivity, IV, chain
+7. **HTTP Server** - Header-only implementation with CORS
+8. **ClickHouse Source** - HTTP API, replay, streaming with watermark
+9. **Kite REST Client** - Login URL, LTP, quote, OHLC, instruments
+10. **Kite WebSocket** - Binary tick parsing (LTP/Quote/Full modes)
+11. **Integration Tests** - Comprehensive test_integration.cpp
+
+### ⚠️ PARTIAL / STUB IMPLEMENTATIONS
+1. **WebSocket Server** - STUB only (websocket_server.cpp is empty)
+2. **Kite HTTP Client** - make_request() returns early with error (needs SSL)
+3. **Kite WebSocket Loop** - ws_loop() simulates connection (needs real WS lib)
+
+### 🔧 RECOMMENDED FIXES
+1. Add real WebSocket server for frontend streaming
+2. Use cpp-httplib for Kite REST (SSL support)
+3. Use websocketpp for Kite WebSocket
+4. Add SHA256 for Kite token generation (OpenSSL or built-in)
+
+## Environment
+- ClickHouse: 110.172.21.62:8123, tick_data_db, market_data
 - Kite: api_key=za4r7gn8aqq3tnwb, user=LEY228
-
-## Existing C++ Structure
-- cpp/include/: Headers for core, payoff, execution, features, streaming, resampling, cache
-- cpp/src/: Implementation files
-- cpp/tests/: test_models, test_features, test_payoff, test_streaming, test_parity
-
-## TODO
-1. [ ] Implement cpp-httplib REST server
-2. [ ] Implement WebSocket server for live streaming  
-3. [ ] Complete ClickHouse source (HTTP API)
-4. [ ] Add Kite API client (REST)
-5. [ ] Add Kite WebSocket client
-6. [ ] Create comprehensive test executables
-7. [ ] Test all features with NIFTY Jan FUT @ 26300
-
-## Files to Create/Update
-- src/api/rest_server.cpp - Full implementation
-- src/api/websocket_server.cpp - Full implementation
-- src/datasource/clickhouse_source.cpp - Full implementation
-- src/kite/kite_client.cpp - NEW
-- src/kite/kite_websocket.cpp - NEW
-- include/kite/ - Headers
-- tests/test_integration.cpp - Integration tests
+- Test: NIFTY Jan FUT @ 26300, 26 DTE
