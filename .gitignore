@@ -3,7 +3,7 @@
 *.exe
 *.cmake
 *.bin
-*.cpp
+
 *.json
 *.yaml
 *.ts
