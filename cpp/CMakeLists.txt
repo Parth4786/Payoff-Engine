@@ -42,7 +42,8 @@ endif()
 # ============================================================================
 if(WIN32)
     add_definitions(-D_WIN32_WINNT=0x0601)
-    link_libraries(ws2_32)
+    # Core Windows networking and crypto libs
+    link_libraries(ws2_32 winhttp bcrypt)
 endif()
 
 # ============================================================================
@@ -77,6 +78,8 @@ add_library(payoff_core STATIC
     src/core/instrument_manager.cpp
     src/core/datasource.cpp
     src/core/market_clock.cpp
+    src/core/http_client.cpp
+    src/core/replay_engine.cpp
     
     # Data sources
     src/datasource/mock_source.cpp

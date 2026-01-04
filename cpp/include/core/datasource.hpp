@@ -144,5 +144,6 @@ std::unique_ptr<MarketDataSource> create_clickhouse_source(
     const std::string& host,
     uint16_t port,
     const std::string& database);
+std::unique_ptr<MarketDataSource> create_clickhouse_source_from_config();
 
 } // namespace payoff::core

@@ -220,6 +220,63 @@ public:
         const std::vector<std::string>& instruments);
     
     // ========================================================================
+    // Basket Margins
+    // ========================================================================
+    
+    /**
+     * @brief Order for margin calculation
+     */
+    struct MarginOrder {
+        std::string exchange;        // NFO, NSE, etc.
+        std::string tradingsymbol;   // e.g., "NIFTY24JAN26300CE"
+        std::string transaction_type; // BUY or SELL
+        int quantity = 0;
+        std::string product;         // NRML, MIS, or CNC
+        std::string order_type = "MARKET";
+        std::optional<double> price;
+        std::optional<double> trigger_price;
+        std::string variety = "regular";
+    };
+    
+    /**
+     * @brief Margin calculation result
+     */
+    struct MarginResult {
+        double total = 0.0;
+        double span = 0.0;
+        double exposure = 0.0;
+        double option_premium = 0.0;
+        double additional = 0.0;
+        double var = 0.0;
+    };
+    
+    /**
+     * @brief Basket margin response
+     */
+    struct BasketMarginResponse {
+        MarginResult initial;
+        MarginResult final_;  // 'final' is reserved keyword
+        std::vector<double> per_leg_margins;
+        bool success = false;
+        std::string error_message;
+    };
+    
+    /**
+     * @brief Calculate margin for a basket of orders
+     * @param orders List of orders to calculate margin for
+     * @param consider_positions Whether to consider existing positions
+     * @return Basket margin calculation result
+     */
+    [[nodiscard]] BasketMarginResponse basket_margins(
+        const std::vector<MarginOrder>& orders,
+        bool consider_positions = false);
+    
+    /**
+     * @brief Calculate margin for a single order
+     */
+    [[nodiscard]] std::optional<MarginResult> order_margin(const MarginOrder& order);
+    
+    // ========================================================================
     // Historical Data
     // ========================================================================
     

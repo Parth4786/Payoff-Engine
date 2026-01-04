@@ -263,6 +263,11 @@ private:
     void notify_disconnect(int code, const std::string& reason);
     void notify_error(const std::string& error);
     
+    // WinHTTP WebSocket helpers
+    static std::wstring string_to_wstring(const std::string& str);
+    void handle_reconnect(int& retry_count);
+    void send_pending_subscriptions(void* hWebSocket);
+    
     // Constants
     static constexpr const char* WS_URL = "wss://ws.kite.trade";
 };

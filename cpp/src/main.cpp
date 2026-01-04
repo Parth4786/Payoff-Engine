@@ -6,9 +6,13 @@
 #include <iostream>
 #include <string>
 
+#include "core/config.hpp"
 #include "core/models.hpp"
 #include "core/instrument_manager.hpp"
 #include "core/market_clock.hpp"
+#include "core/datasource.hpp"
+#include "core/replay_engine.hpp"
+#include "kite/kite_client.hpp"
 #include "payoff/models.hpp"
 #include "payoff/pricing.hpp"
 #include "payoff/calculator.hpp"
@@ -184,9 +188,73 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     
     std::cout << "\n=== Ready for Production ===\n" << std::endl;
     
-    // TODO: Start REST/WebSocket servers
-    // TODO: Connect to data sources
-    // TODO: Load instruments
+    // Test connectivity
+    std::cout << "=== Testing Connectivity ===\n" << std::endl;
+    
+    // Load config
+    auto& cfg = config::config();
+    cfg.load();
+    
+    // Test ClickHouse
+    std::cout << "Testing ClickHouse connection..." << std::endl;
+    try {
+        auto ch_source = core::create_clickhouse_source_from_config();
+        if (ch_source && ch_source->is_connected()) {
+            std::cout << "  ✓ ClickHouse: Connected to " << cfg.ch_host() 
+                      << ":" << cfg.ch_port() << "/" << cfg.ch_database() << std::endl;
+            
+            // Get available symbols
+            auto symbols = ch_source->get_symbols();
+            std::cout << "  ✓ Available instruments: " << symbols.size() << std::endl;
+        } else {
+            std::cout << "  ✗ ClickHouse: Connection failed" << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cout << "  ✗ ClickHouse: " << e.what() << std::endl;
+    }
+    
+    // Test Kite (if access token available)
+    std::cout << "\nTesting Kite connection..." << std::endl;
+    try {
+        auto kite_client = kite::create_kite_client();
+        if (kite_client && !cfg.kite_access_token().empty()) {
+            // Try to get profile
+            auto [profile, error] = kite_client->profile();
+            if (error == kite::KiteError::None) {
+                std::cout << "  ✓ Kite: Connected as " << profile.user_id << std::endl;
+            } else {
+                std::cout << "  ✗ Kite: API call failed (token may be expired)" << std::endl;
+                std::cout << "    Login URL: " << kite_client->login_url() << std::endl;
+            }
+        } else {
+            std::cout << "  ! Kite: No access token configured" << std::endl;
+            auto temp_client = kite::create_kite_client();
+            if (temp_client) {
+                std::cout << "    Login URL: " << temp_client->login_url() << std::endl;
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cout << "  ✗ Kite: " << e.what() << std::endl;
+    }
+    
+    // Load instruments
+    std::cout << "\nLoading instruments..." << std::endl;
+    try {
+        auto& inst_mgr = core::get_instrument_manager();
+        std::string inst_dir = cfg.get("KITE_INSTRUMENT_MASTER_DIR", "");
+        if (!inst_dir.empty()) {
+            size_t count = inst_mgr.load_directory(inst_dir);
+            std::cout << "  ✓ Loaded " << count << " instruments" << std::endl;
+            std::cout << "  ✓ NSE: " << inst_mgr.count_by_exchange(core::Exchange::NSE) << std::endl;
+            std::cout << "  ✓ NFO: " << inst_mgr.count_by_exchange(core::Exchange::NFO) << std::endl;
+        } else {
+            std::cout << "  ! No instrument directory configured" << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cout << "  ✗ Instruments: " << e.what() << std::endl;
+    }
+    
+    std::cout << "\n=== System Ready ===\n" << std::endl;
     
     return 0;
 }
