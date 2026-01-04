@@ -1,0 +1,2 @@
+C:\Users\LENOVO\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin\ar.exe qc libpayoff_api.a CMakeFiles/payoff_api.dir/src/api/rest_server.cpp.obj CMakeFiles/payoff_api.dir/src/api/websocket_server.cpp.obj CMakeFiles/payoff_api.dir/src/api/routes.cpp.obj CMakeFiles/payoff_api.dir/src/api/dto.cpp.obj
+C:\Users\LENOVO\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin\ranlib.exe libpayoff_api.a

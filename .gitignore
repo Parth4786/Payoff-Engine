@@ -1,2 +1,13 @@
 *.pyc
 /docs/DeskMetrics/inspiration
+*.exe
+*.cmake
+*.bin
+*.cpp
+*.json
+*.yaml
+*.ts
+*.make
+*.d
+*.obj
+

@@ -1,0 +1,10 @@
+C:/Users/LENOVO/Desktop/Payoff-Engine/cpp/build/CMakeFiles/payoff_core.dir
+C:/Users/LENOVO/Desktop/Payoff-Engine/cpp/build/CMakeFiles/payoff_api.dir
+C:/Users/LENOVO/Desktop/Payoff-Engine/cpp/build/CMakeFiles/payoff_engine.dir
+C:/Users/LENOVO/Desktop/Payoff-Engine/cpp/build/CMakeFiles/test.dir
+C:/Users/LENOVO/Desktop/Payoff-Engine/cpp/build/CMakeFiles/edit_cache.dir
+C:/Users/LENOVO/Desktop/Payoff-Engine/cpp/build/CMakeFiles/rebuild_cache.dir
+C:/Users/LENOVO/Desktop/Payoff-Engine/cpp/build/CMakeFiles/list_install_components.dir
+C:/Users/LENOVO/Desktop/Payoff-Engine/cpp/build/CMakeFiles/install.dir
+C:/Users/LENOVO/Desktop/Payoff-Engine/cpp/build/CMakeFiles/install/local.dir
+C:/Users/LENOVO/Desktop/Payoff-Engine/cpp/build/CMakeFiles/install/strip.dir
