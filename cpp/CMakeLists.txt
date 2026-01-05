@@ -79,6 +79,7 @@ add_library(payoff_core STATIC
     src/core/datasource.cpp
     src/core/market_clock.cpp
     src/core/http_client.cpp
+    src/core/clickhouse_http.cpp
     src/core/replay_engine.cpp
     
     # Data sources
