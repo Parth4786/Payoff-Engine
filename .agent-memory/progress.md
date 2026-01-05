@@ -8,8 +8,11 @@
 - `payoff_engine.exe` (789 KB) - Main executable
 - `test_integration.exe` (735 KB) - Test suite
 
-**Test Results:** 31/32 PASSED
-- Only failure: ClickHouse connect (requires network access to 110.172.21.62)
+**Test Results:** 33/33 PASSED
+
+Notes:
+- ClickHouse connect fixed by URL-encoding credentials (handles '#') and ensuring Winsock init.
+- Kite can now auto-fetch `KITE_ACCESS_TOKEN` from `KITE_ACCESS_TOKEN_URL` (credential service) in pure C++.
 
 ### ✅ FULLY IMPLEMENTED & VERIFIED
 
@@ -22,6 +25,7 @@
 #### Kite Integration
 5. **Kite REST Client** - make_request() now uses HttpClient for REAL API calls
 6. **Kite Token Auth** - generate_access_token() with proper SHA256 checksum
+6.1 **Kite Token Service** - optional fetch of access token from `KITE_ACCESS_TOKEN_URL` (HTTP)
 7. **Kite WebSocket** - ws_loop() uses WinHTTP WebSocket API (wss://ws.kite.trade)
 8. **Basket Margins API** - basket_margins() and order_margin() implemented
 

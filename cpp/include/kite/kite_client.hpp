@@ -153,6 +153,11 @@ public:
      * @brief Set access token directly (for pre-authenticated sessions)
      */
     void set_access_token(const std::string& token);
+
+    /**
+     * @brief Get current access token (empty if not set)
+     */
+    [[nodiscard]] std::string get_access_token() const;
     
     /**
      * @brief Check if client has valid access token

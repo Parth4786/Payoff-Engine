@@ -4,7 +4,9 @@
  */
 
 #include <iostream>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "core/config.hpp"
 #include "core/models.hpp"
@@ -22,6 +24,64 @@
 #include "cache/market_cache.hpp"
 
 using namespace payoff;
+
+namespace {
+
+bool has_flag(int argc, char* argv[], const std::string& flag) {
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] && flag == argv[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<std::string> get_arg_value(int argc, char* argv[], const std::string& flag) {
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (argv[i] && flag == argv[i]) {
+            return std::string(argv[i + 1]);
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> extract_query_param(const std::string& url, const std::string& key) {
+    auto qpos = url.find('?');
+    if (qpos == std::string::npos) return std::nullopt;
+
+    auto frag = url.find('#', qpos + 1);
+    std::string query = url.substr(qpos + 1, frag == std::string::npos ? std::string::npos : frag - (qpos + 1));
+
+    size_t start = 0;
+    while (start < query.size()) {
+        auto amp = query.find('&', start);
+        std::string kv = query.substr(start, amp == std::string::npos ? std::string::npos : amp - start);
+        auto eq = kv.find('=');
+        if (eq != std::string::npos) {
+            std::string k = kv.substr(0, eq);
+            std::string v = kv.substr(eq + 1);
+            if (k == key) {
+                return v;
+            }
+        }
+        if (amp == std::string::npos) break;
+        start = amp + 1;
+    }
+    return std::nullopt;
+}
+
+void print_usage(const std::string& exe) {
+    std::cout
+        << "Usage:\n"
+        << "  " << exe << " --test-connectivity\n"
+        << "  " << exe << " --kite-login-url\n"
+    << "  " << exe << " --kite-fetch-access-token-url\n"
+        << "  " << exe << " --kite-exchange-request-token <request_token>\n"
+        << "  " << exe << " --kite-exchange-redirect-url <redirect_url_with_request_token>\n"
+        << "  " << exe << " --clickhouse-ping\n";
+}
+
+} // namespace
 
 void print_banner() {
     std::cout << R"(
@@ -166,8 +226,13 @@ void demo_features() {
     }
 }
 
-int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
+int main(int argc, char* argv[]) {
     print_banner();
+
+    if (has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h")) {
+        print_usage(argc > 0 ? argv[0] : "payoff_engine");
+        return 0;
+    }
     
     std::cout << "Payoff Engine initialized successfully.\n" << std::endl;
     std::cout << "Components:" << std::endl;
@@ -181,19 +246,92 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     std::cout << "  ✓ Streaming Pipeline" << std::endl;
     std::cout << "  ✓ Market Cache" << std::endl;
     
-    // Run demos
-    demo_black_scholes();
-    demo_payoff_calculation();
-    demo_features();
-    
-    std::cout << "\n=== Ready for Production ===\n" << std::endl;
-    
-    // Test connectivity
-    std::cout << "=== Testing Connectivity ===\n" << std::endl;
-    
-    // Load config
+    // Load config early (used by CLI tools)
     auto& cfg = config::config();
     cfg.load();
+
+    // Kite CLI helpers
+    if (has_flag(argc, argv, "--kite-login-url")) {
+        auto client = kite::create_kite_client();
+        if (!client) {
+            std::cout << "Failed to create Kite client (check KITE_API_KEY/KITE_API_SECRET)." << std::endl;
+            return 1;
+        }
+        std::cout << client->get_login_url() << std::endl;
+        std::cout << "\nOpen this URL in a browser, complete login, and copy the request_token from the redirect URL." << std::endl;
+        return 0;
+    }
+
+    if (has_flag(argc, argv, "--kite-fetch-access-token-url")) {
+        auto client = kite::create_kite_client();
+        if (!client) {
+            std::cout << "Failed to create Kite client." << std::endl;
+            return 1;
+        }
+        if (!client->is_authenticated()) {
+            std::cout << "Failed to fetch access token. Set KITE_ACCESS_TOKEN_URL in .env." << std::endl;
+            return 1;
+        }
+        std::cout << "KITE_ACCESS_TOKEN=" << client->get_access_token() << std::endl;
+        return 0;
+    }
+
+    if (auto rt = get_arg_value(argc, argv, "--kite-exchange-request-token")) {
+        kite::KiteClient client;
+        auto res = client.generate_access_token(*rt);
+        if (!res.ok()) {
+            std::cout << "Kite access token exchange failed: " << res.message << std::endl;
+            return 1;
+        }
+        std::cout << "KITE_ACCESS_TOKEN=" << client.get_access_token() << std::endl;
+        return 0;
+    }
+
+    if (auto url = get_arg_value(argc, argv, "--kite-exchange-redirect-url")) {
+        auto rt = extract_query_param(*url, "request_token");
+        if (!rt) {
+            std::cout << "No request_token found in URL." << std::endl;
+            return 1;
+        }
+        kite::KiteClient client;
+        auto res = client.generate_access_token(*rt);
+        if (!res.ok()) {
+            std::cout << "Kite access token exchange failed: " << res.message << std::endl;
+            return 1;
+        }
+        std::cout << "KITE_ACCESS_TOKEN=" << client.get_access_token() << std::endl;
+        return 0;
+    }
+
+    if (has_flag(argc, argv, "--clickhouse-ping")) {
+        try {
+            auto ch_source = core::create_clickhouse_source_from_config();
+            if (ch_source && ch_source->is_connected()) {
+                std::cout << "ClickHouse OK: " << cfg.ch_host() << ":" << cfg.ch_port() << "/" << cfg.ch_database() << std::endl;
+                auto symbols = ch_source->get_symbols();
+                std::cout << "Distinct instruments (sample): " << symbols.size() << std::endl;
+                return 0;
+            }
+            std::cout << "ClickHouse connect failed." << std::endl;
+            return 1;
+        } catch (const std::exception& e) {
+            std::cout << "ClickHouse error: " << e.what() << std::endl;
+            return 1;
+        }
+    }
+
+    const bool only_connectivity = has_flag(argc, argv, "--test-connectivity");
+
+    // Run demos unless user asked for connectivity-only
+    if (!only_connectivity) {
+        demo_black_scholes();
+        demo_payoff_calculation();
+        demo_features();
+        std::cout << "\n=== Ready for Production ===\n" << std::endl;
+    }
+
+    // Test connectivity
+    std::cout << "=== Testing Connectivity ===\n" << std::endl;
     
     // Test ClickHouse
     std::cout << "Testing ClickHouse connection..." << std::endl;

@@ -146,6 +146,7 @@ public:
     [[nodiscard]] std::string kite_password() const { return get("KITE_PASSWORD", ""); }
     [[nodiscard]] std::string kite_totp_secret() const { return get("KITE_TOTP_SECRET", ""); }
     [[nodiscard]] std::string kite_access_token() const { return get("KITE_ACCESS_TOKEN", ""); }
+    [[nodiscard]] std::string kite_access_token_url() const { return get("KITE_ACCESS_TOKEN_URL", ""); }
     [[nodiscard]] std::string kite_instrument_dir() const { 
         return get("KITE_INSTRUMENT_MASTER_DIR", ""); 
     }

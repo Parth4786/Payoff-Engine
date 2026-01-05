@@ -9,10 +9,12 @@
 
 #include "core/datasource.hpp"
 #include "core/config.hpp"
+#include "core/http_client.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <mutex>
@@ -42,6 +44,20 @@
 namespace payoff::core {
 
 namespace {
+
+#ifdef _WIN32
+void ensure_winsock_initialized() {
+    static std::once_flag once;
+    std::call_once(once, []() {
+        WSADATA wsa{};
+        const int rc = WSAStartup(MAKEWORD(2, 2), &wsa);
+        if (rc != 0) {
+            throw std::runtime_error("WSAStartup failed: " + std::to_string(rc));
+        }
+        std::atexit([]() { WSACleanup(); });
+    });
+}
+#endif
 
 // Parse tab-separated value row
 std::vector<std::string> parse_tsv_row(const std::string& line) {
@@ -328,16 +344,19 @@ private:
     }
     
     std::string execute_query(const std::string& query) const {
+#ifdef _WIN32
+        ensure_winsock_initialized();
+#endif
         // Build HTTP POST request to ClickHouse
         std::ostringstream http_request;
         
         // URL encode query for safety
-        std::string path = "/?database=" + database_;
+        std::string path = "/?database=" + core::HttpClient::url_encode(database_);
         if (!username_.empty()) {
-            path += "&user=" + username_;
+            path += "&user=" + core::HttpClient::url_encode(username_);
         }
         if (!password_.empty()) {
-            path += "&password=" + password_;
+            path += "&password=" + core::HttpClient::url_encode(password_);
         }
         
         http_request << "POST " << path << " HTTP/1.1\r\n"
@@ -389,6 +408,29 @@ private:
         CLOSE_SOCKET(sock);
         
         // Parse HTTP response - extract body after headers
+        // Validate status line if present
+        auto status_end = response.find("\r\n");
+        if (status_end != std::string::npos) {
+            std::string status_line = response.substr(0, status_end);
+            // Expect: HTTP/1.1 200 OK
+            auto first_sp = status_line.find(' ');
+            if (first_sp != std::string::npos) {
+                auto second_sp = status_line.find(' ', first_sp + 1);
+                std::string code_str = (second_sp == std::string::npos)
+                    ? status_line.substr(first_sp + 1)
+                    : status_line.substr(first_sp + 1, second_sp - (first_sp + 1));
+                try {
+                    int code = std::stoi(code_str);
+                    if (code < 200 || code >= 300) {
+                        auto body_start = response.find("\r\n\r\n");
+                        std::string body = (body_start != std::string::npos) ? response.substr(body_start + 4) : response;
+                        throw std::runtime_error("ClickHouse HTTP " + std::to_string(code) + ": " + body);
+                    }
+                } catch (...) {
+                    // ignore parse issues
+                }
+            }
+        }
         auto body_start = response.find("\r\n\r\n");
         if (body_start != std::string::npos) {
             return response.substr(body_start + 4);

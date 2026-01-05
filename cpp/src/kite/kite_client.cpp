@@ -77,6 +77,68 @@ int64_t extract_json_int64(const std::string& json, const std::string& key) {
     }
 }
 
+static std::string trim_copy(const std::string& s) {
+    const auto start = s.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return "";
+    const auto end = s.find_last_not_of(" \t\r\n");
+    return s.substr(start, end - start + 1);
+}
+
+static std::optional<std::string> parse_token_service_response(const std::string& body) {
+    std::string b = trim_copy(body);
+    if (b.empty()) return std::nullopt;
+
+    // Common case: JSON string, e.g. "abcd..."
+    if (b.size() >= 2 && ((b.front() == '"' && b.back() == '"') || (b.front() == '\'' && b.back() == '\''))) {
+        b = b.substr(1, b.size() - 2);
+        b = trim_copy(b);
+    }
+
+    // If it looks like JSON object, try known keys
+    if (!b.empty() && b.front() == '{') {
+        std::string t = extract_json_string(b, "access_token");
+        if (!t.empty()) return t;
+        t = extract_json_string(b, "token");
+        if (!t.empty()) return t;
+        t = extract_json_string(b, "data");
+        if (!t.empty()) return t;
+        return std::nullopt;
+    }
+
+    // Otherwise treat it as a raw token string
+    return b;
+}
+
+static std::optional<std::string> fetch_access_token_from_url(
+    const std::string& token_url,
+    std::string* error_out) {
+
+    try {
+        core::HttpClient client;
+        client.set_base_url(token_url);
+        client.set_timeout(10000);
+        client.set_header("Accept", "application/json");
+        auto resp = client.get("");
+        if (resp.is_error()) {
+            if (error_out) *error_out = resp.error_message;
+            return std::nullopt;
+        }
+        if (!resp.ok()) {
+            if (error_out) *error_out = "HTTP " + std::to_string(resp.status_code) + ": " + resp.body;
+            return std::nullopt;
+        }
+        auto tok = parse_token_service_response(resp.body);
+        if (!tok || tok->empty()) {
+            if (error_out) *error_out = "Empty token response";
+            return std::nullopt;
+        }
+        return tok;
+    } catch (const std::exception& e) {
+        if (error_out) *error_out = e.what();
+        return std::nullopt;
+    }
+}
+
 } // anonymous namespace
 
 // ============================================================================
@@ -95,6 +157,22 @@ KiteClient::KiteClient() {
     api_key_ = cfg.kite_api_key();
     api_secret_ = cfg.kite_api_secret();
     access_token_ = cfg.kite_access_token();
+
+    // If no access token is configured, optionally fetch it from a token service URL.
+    // This matches the pattern used by scripts/min_kite_login.py (CREDENTIALS_API_URL).
+    if (access_token_.empty()) {
+        const std::string token_url = cfg.kite_access_token_url();
+        if (!token_url.empty()) {
+            std::string err;
+            auto tok = fetch_access_token_from_url(token_url, &err);
+            if (tok) {
+                access_token_ = *tok;
+                clear_error();
+            } else {
+                set_error(KiteError::AuthenticationFailed, "Failed to fetch access token from URL: " + err);
+            }
+        }
+    }
 }
 
 KiteClient::~KiteClient() = default;
@@ -106,6 +184,10 @@ std::string KiteClient::get_login_url() const {
 void KiteClient::set_access_token(const std::string& token) {
     access_token_ = token;
     clear_error();
+}
+
+std::string KiteClient::get_access_token() const {
+    return access_token_;
 }
 
 bool KiteClient::is_authenticated() const noexcept {
