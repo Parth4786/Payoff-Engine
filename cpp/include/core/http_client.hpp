@@ -9,10 +9,11 @@
 #ifndef PAYOFF_CORE_HTTP_CLIENT_HPP
 #define PAYOFF_CORE_HTTP_CLIENT_HPP
 
+#include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
-#include <optional>
-#include <functional>
 
 namespace payoff::core {
 

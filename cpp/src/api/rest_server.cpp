@@ -21,6 +21,7 @@
 #include "payoff/pricing.hpp"
 #include "payoff/models.hpp"
 
+#include <iostream>
 #include <sstream>
 #include <iomanip>
 

@@ -1,8 +1,6 @@
 /**
  * @file risk.cpp
  * @brief Risk calculations - VaR, max drawdown, position limits, kill switch
- * 
- * Implements comprehensive risk metrics for option positions.
  */
 
 #include "payoff/calculator.hpp"
@@ -19,98 +17,85 @@ namespace payoff::engine {
 // Value at Risk (VaR) Calculator
 // ============================================================================
 
+struct VaRConfig {
+    int num_simulations = 10000;
+    double spot_vol = 0.02;
+    double iv_vol = 0.10;
+    double correlation = -0.3;
+    int holding_period = 1;
+};
+
 struct VaRResult {
-    double var_95;           // 95% VaR (1-day)
-    double var_99;           // 99% VaR (1-day)
-    double cvar_95;          // Conditional VaR (Expected Shortfall)
-    double max_loss;         // Maximum loss in simulation
-    int num_simulations;
+    double var_95 = 0.0;
+    double var_99 = 0.0;
+    double cvar_95 = 0.0;
+    double max_loss = 0.0;
+    int num_simulations = 0;
 };
 
 class VaRCalculator {
 public:
-    struct Config {
-        int num_simulations = 10000;
-        double spot_vol = 0.02;      // Daily spot volatility (2%)
-        double iv_vol = 0.10;        // Daily IV volatility (10% relative)
-        double correlation = -0.3;   // Spot-IV correlation (negative = fear)
-        int holding_period = 1;      // Days
-    };
+    VaRConfig config;
     
-    explicit VaRCalculator(Config config = {}) : config_(std::move(config)) {}
+    VaRCalculator() = default;
+    explicit VaRCalculator(VaRConfig cfg) : config(cfg) {}
     
-    /**
-     * @brief Calculate VaR for a strategy
-     */
     VaRResult calculate(
         PayoffCalculator& calc,
         const Strategy& strategy,
         double current_iv) const {
         
         std::vector<double> pnls;
-        pnls.reserve(config_.num_simulations);
+        pnls.reserve(config.num_simulations);
         
-        // Monte Carlo simulation
-        std::mt19937 gen(42);  // Fixed seed for reproducibility
+        std::mt19937 gen(42);
         std::normal_distribution<> norm(0.0, 1.0);
         
-        // Calculate base P&L
-        double base_pnl = calculate_strategy_pnl(calc, strategy, 
+        double base_pnl = calculate_strategy_pnl(strategy, 
             strategy.underlying_price, current_iv, 0);
         
-        for (int i = 0; i < config_.num_simulations; ++i) {
-            // Generate correlated shocks
+        for (int i = 0; i < config.num_simulations; ++i) {
             double z1 = norm(gen);
-            double z2 = config_.correlation * z1 + 
-                       std::sqrt(1 - config_.correlation * config_.correlation) * norm(gen);
+            double z2 = config.correlation * z1 + 
+                       std::sqrt(1 - config.correlation * config.correlation) * norm(gen);
             
-            // Apply shocks
-            double spot_shock = config_.spot_vol * std::sqrt(config_.holding_period) * z1;
-            double iv_shock = config_.iv_vol * z2;
+            double spot_shock = config.spot_vol * std::sqrt(config.holding_period) * z1;
+            double iv_shock = config.iv_vol * z2;
             
             double new_spot = strategy.underlying_price * (1 + spot_shock);
             double new_iv = current_iv * (1 + iv_shock);
-            new_iv = std::max(0.05, new_iv);  // Floor IV at 5%
+            new_iv = std::max(0.05, new_iv);
             
-            // Calculate P&L
-            double sim_pnl = calculate_strategy_pnl(calc, strategy, 
-                new_spot, new_iv, config_.holding_period);
+            double sim_pnl = calculate_strategy_pnl(strategy, 
+                new_spot, new_iv, config.holding_period);
             
             pnls.push_back(sim_pnl - base_pnl);
         }
         
-        // Sort for percentile calculation
         std::sort(pnls.begin(), pnls.end());
         
         VaRResult result;
-        result.num_simulations = config_.num_simulations;
+        result.num_simulations = config.num_simulations;
         
-        // 95% VaR (5th percentile of losses)
-        int idx_95 = static_cast<int>(0.05 * config_.num_simulations);
+        int idx_95 = static_cast<int>(0.05 * config.num_simulations);
         result.var_95 = -pnls[idx_95];
         
-        // 99% VaR (1st percentile of losses)
-        int idx_99 = static_cast<int>(0.01 * config_.num_simulations);
+        int idx_99 = static_cast<int>(0.01 * config.num_simulations);
         result.var_99 = -pnls[idx_99];
         
-        // Conditional VaR (average of worst 5%)
         double sum_worst = 0.0;
         for (int i = 0; i < idx_95; ++i) {
             sum_worst += pnls[i];
         }
         result.cvar_95 = -sum_worst / idx_95;
         
-        // Max loss
         result.max_loss = -pnls.front();
         
         return result;
     }
 
 private:
-    Config config_;
-    
     double calculate_strategy_pnl(
-        PayoffCalculator& calc,
         const Strategy& strategy,
         double spot,
         double iv,
@@ -119,8 +104,7 @@ private:
         double total_pnl = 0.0;
         
         for (const auto& leg : strategy.legs) {
-            double time_to_expiry = std::max(
-                (30 - days_forward) / 365.0, 0.001);  // Simplified DTE
+            double time_to_expiry = std::max((30 - days_forward) / 365.0, 0.001);
             
             PricingParams params;
             params.spot = spot;
@@ -144,39 +128,32 @@ private:
 // ============================================================================
 
 struct PositionRisk {
-    double margin_required;
-    double margin_used;
-    double margin_utilization;   // % of available margin used
-    
-    double notional_exposure;    // Total notional value
-    double delta_exposure;       // Net delta in underlying terms
-    double gamma_exposure;
-    double vega_exposure;
-    
-    double max_profit;
-    double max_loss;
-    double risk_reward_ratio;
-    
-    double probability_of_profit;  // Based on current Greeks
-    double expected_value;
+    double margin_required = 0.0;
+    double margin_used = 0.0;
+    double margin_utilization = 0.0;
+    double notional_exposure = 0.0;
+    double delta_exposure = 0.0;
+    double gamma_exposure = 0.0;
+    double vega_exposure = 0.0;
+    double max_profit = 0.0;
+    double max_loss = 0.0;
+    double risk_reward_ratio = 0.0;
+    double probability_of_profit = 0.0;
+    double expected_value = 0.0;
 };
 
-/**
- * @brief Calculate comprehensive position risk metrics
- */
 PositionRisk calculate_position_risk(
     const Strategy& strategy,
     double current_iv,
     double available_margin) {
     
-    PositionRisk risk = {};
+    PositionRisk risk;
     
-    // Calculate aggregate Greeks
-    Greeks total_greeks = {};
+    Greeks total_greeks;
     double notional = 0.0;
     
     for (const auto& leg : strategy.legs) {
-        double time_to_expiry = 30.0 / 365.0;  // Assume 30 DTE
+        double time_to_expiry = 30.0 / 365.0;
         
         PricingParams params;
         params.spot = strategy.underlying_price;
@@ -203,14 +180,12 @@ PositionRisk calculate_position_risk(
     risk.gamma_exposure = total_greeks.gamma;
     risk.vega_exposure = total_greeks.vega;
     
-    // Estimate margin (simplified SPAN-like)
-    risk.margin_required = std::abs(risk.delta_exposure) * 0.15 +  // 15% of delta
+    risk.margin_required = std::abs(risk.delta_exposure) * 0.15 +
                           std::abs(risk.gamma_exposure) * strategy.underlying_price * 0.05;
     risk.margin_used = risk.margin_required;
     risk.margin_utilization = available_margin > 0 ? 
         (risk.margin_used / available_margin) * 100.0 : 0.0;
     
-    // Calculate max profit/loss from payoff curve
     PayoffCalculator calc;
     auto curve = calc.calculate_expiry_payoff(strategy);
     risk.max_profit = curve.max_profit;
@@ -219,12 +194,9 @@ PositionRisk calculate_position_risk(
     risk.risk_reward_ratio = risk.max_loss != 0 ? 
         std::abs(risk.max_profit / risk.max_loss) : 0.0;
     
-    // Probability of profit (simplified using delta as proxy)
-    // For single option: PoP ≈ |delta| for ITM, 1-|delta| for OTM
     risk.probability_of_profit = 0.5 + total_greeks.delta * 0.5;
     risk.probability_of_profit = std::max(0.0, std::min(1.0, risk.probability_of_profit));
     
-    // Expected value
     risk.expected_value = risk.probability_of_profit * risk.max_profit + 
                          (1 - risk.probability_of_profit) * risk.max_loss;
     
@@ -232,13 +204,13 @@ PositionRisk calculate_position_risk(
 }
 
 // ============================================================================
-// Kill Switch - Position Limits and Circuit Breakers
+// Kill Switch
 // ============================================================================
 
 struct KillSwitchConfig {
-    double max_position_value = 1000000.0;   // Max notional
-    double max_margin_utilization = 80.0;    // %
-    double max_delta_exposure = 100000.0;    // In underlying terms
+    double max_position_value = 1000000.0;
+    double max_margin_utilization = 80.0;
+    double max_delta_exposure = 100000.0;
     double max_loss_per_trade = 50000.0;
     double max_daily_loss = 100000.0;
     int max_positions = 50;
@@ -248,18 +220,8 @@ struct KillSwitchConfig {
 struct KillSwitchStatus {
     bool is_tripped = false;
     std::vector<std::string> violations;
-    
-    bool check_position_value = false;
-    bool check_margin = false;
-    bool check_delta = false;
-    bool check_loss = false;
-    bool check_count = false;
-    bool check_vega = false;
 };
 
-/**
- * @brief Check if kill switch should be triggered
- */
 KillSwitchStatus check_kill_switch(
     const PositionRisk& risk,
     double current_loss,
@@ -269,67 +231,39 @@ KillSwitchStatus check_kill_switch(
     
     KillSwitchStatus status;
     
-    // Check position value
     if (risk.notional_exposure > config.max_position_value) {
         status.is_tripped = true;
-        status.check_position_value = true;
-        status.violations.push_back(
-            "Position value " + std::to_string(risk.notional_exposure) + 
-            " exceeds limit " + std::to_string(config.max_position_value));
+        status.violations.push_back("Position value exceeds limit");
     }
     
-    // Check margin utilization
     if (risk.margin_utilization > config.max_margin_utilization) {
         status.is_tripped = true;
-        status.check_margin = true;
-        status.violations.push_back(
-            "Margin utilization " + std::to_string(risk.margin_utilization) + 
-            "% exceeds limit " + std::to_string(config.max_margin_utilization) + "%");
+        status.violations.push_back("Margin utilization exceeds limit");
     }
     
-    // Check delta exposure
     if (std::abs(risk.delta_exposure) > config.max_delta_exposure) {
         status.is_tripped = true;
-        status.check_delta = true;
-        status.violations.push_back(
-            "Delta exposure " + std::to_string(risk.delta_exposure) + 
-            " exceeds limit " + std::to_string(config.max_delta_exposure));
+        status.violations.push_back("Delta exposure exceeds limit");
     }
     
-    // Check current trade loss
     if (current_loss > config.max_loss_per_trade) {
         status.is_tripped = true;
-        status.check_loss = true;
-        status.violations.push_back(
-            "Trade loss " + std::to_string(current_loss) + 
-            " exceeds limit " + std::to_string(config.max_loss_per_trade));
+        status.violations.push_back("Trade loss exceeds limit");
     }
     
-    // Check daily loss
     if (daily_loss > config.max_daily_loss) {
         status.is_tripped = true;
-        status.check_loss = true;
-        status.violations.push_back(
-            "Daily loss " + std::to_string(daily_loss) + 
-            " exceeds limit " + std::to_string(config.max_daily_loss));
+        status.violations.push_back("Daily loss exceeds limit");
     }
     
-    // Check position count
     if (position_count > config.max_positions) {
         status.is_tripped = true;
-        status.check_count = true;
-        status.violations.push_back(
-            "Position count " + std::to_string(position_count) + 
-            " exceeds limit " + std::to_string(config.max_positions));
+        status.violations.push_back("Position count exceeds limit");
     }
     
-    // Check vega exposure
     if (std::abs(risk.vega_exposure) > config.max_vega_exposure) {
         status.is_tripped = true;
-        status.check_vega = true;
-        status.violations.push_back(
-            "Vega exposure " + std::to_string(risk.vega_exposure) + 
-            " exceeds limit " + std::to_string(config.max_vega_exposure));
+        status.violations.push_back("Vega exposure exceeds limit");
     }
     
     return status;
@@ -340,16 +274,13 @@ KillSwitchStatus check_kill_switch(
 // ============================================================================
 
 struct DrawdownResult {
-    double current_drawdown;
-    double max_drawdown;
-    double max_drawdown_duration;  // In days
-    double recovery_factor;        // Total return / max drawdown
+    double current_drawdown = 0.0;
+    double max_drawdown = 0.0;
+    double max_drawdown_duration = 0.0;
+    double recovery_factor = 0.0;
     std::vector<double> drawdown_series;
 };
 
-/**
- * @brief Calculate drawdown metrics from P&L series
- */
 DrawdownResult calculate_drawdown(const std::vector<double>& pnl_series) {
     DrawdownResult result;
     
@@ -357,21 +288,18 @@ DrawdownResult calculate_drawdown(const std::vector<double>& pnl_series) {
         return result;
     }
     
-    // Calculate cumulative P&L
     std::vector<double> cumulative(pnl_series.size());
     cumulative[0] = pnl_series[0];
     for (size_t i = 1; i < pnl_series.size(); ++i) {
         cumulative[i] = cumulative[i-1] + pnl_series[i];
     }
     
-    // Calculate running max
     std::vector<double> running_max(pnl_series.size());
     running_max[0] = cumulative[0];
     for (size_t i = 1; i < cumulative.size(); ++i) {
         running_max[i] = std::max(running_max[i-1], cumulative[i]);
     }
     
-    // Calculate drawdown series
     result.drawdown_series.resize(pnl_series.size());
     double max_dd = 0.0;
     int max_dd_start = 0;
@@ -401,7 +329,6 @@ DrawdownResult calculate_drawdown(const std::vector<double>& pnl_series) {
     result.max_drawdown = max_dd;
     result.max_drawdown_duration = static_cast<double>(max_dd_end - max_dd_start);
     
-    // Recovery factor
     double total_return = cumulative.back();
     result.recovery_factor = max_dd > 0 ? total_return / max_dd : 0.0;
     

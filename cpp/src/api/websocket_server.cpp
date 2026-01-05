@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <functional>
 #include <iostream>
 #include <map>

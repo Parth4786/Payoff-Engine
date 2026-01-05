@@ -219,18 +219,18 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
         auto kite_client = kite::create_kite_client();
         if (kite_client && !cfg.kite_access_token().empty()) {
             // Try to get profile
-            auto [profile, error] = kite_client->profile();
-            if (error == kite::KiteError::None) {
-                std::cout << "  ✓ Kite: Connected as " << profile.user_id << std::endl;
+            auto profile_opt = kite_client->get_profile();
+            if (profile_opt) {
+                std::cout << "  ✓ Kite: Connected as " << profile_opt->user_id << std::endl;
             } else {
                 std::cout << "  ✗ Kite: API call failed (token may be expired)" << std::endl;
-                std::cout << "    Login URL: " << kite_client->login_url() << std::endl;
+                std::cout << "    Login URL: " << kite_client->get_login_url() << std::endl;
             }
         } else {
             std::cout << "  ! Kite: No access token configured" << std::endl;
             auto temp_client = kite::create_kite_client();
             if (temp_client) {
-                std::cout << "    Login URL: " << temp_client->login_url() << std::endl;
+                std::cout << "    Login URL: " << temp_client->get_login_url() << std::endl;
             }
         }
     } catch (const std::exception& e) {

@@ -16,6 +16,7 @@
 #include <cstring>
 #include <iomanip>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
