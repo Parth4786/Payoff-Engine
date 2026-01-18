@@ -909,10 +909,10 @@ void start_rest_server(int port) {
             // Test query to verify tick data access
             try {
                 auto result = core::clickhouse_execute_query(ch_config, 
-                    "SELECT count() FROM tick_data LIMIT 1");
-                std::cout << "[Datasource] ✓ ClickHouse tick_data accessible\n";
+                    "SELECT count() FROM market_data LIMIT 1");
+                std::cout << "[Datasource] ✓ ClickHouse market_data accessible\n";
             } catch (const std::exception& e) {
-                std::cout << "[Datasource] ⚠ ClickHouse tick_data: " << e.what() << "\n";
+                std::cout << "[Datasource] ⚠ ClickHouse market_data: " << e.what() << "\n";
             }
         } else {
             std::cout << "[Datasource] ✗ ClickHouse connection FAILED\n";

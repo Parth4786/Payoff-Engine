@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
 #include <iostream>
 #include <sstream>
 
@@ -20,6 +21,11 @@
     #include <windows.h>
     #include <winhttp.h>
     #pragma comment(lib, "winhttp.lib")
+
+    // Some Windows SDK / MinGW headers omit this flag even though WinHTTP supports it.
+    #ifndef SECURITY_FLAG_IGNORE_REVOCATION
+        #define SECURITY_FLAG_IGNORE_REVOCATION 0x00000080
+    #endif
 #endif
 
 namespace payoff::kite {
@@ -59,6 +65,34 @@ inline uint64_t read_uint64_be(const uint8_t* data) {
 
 // Price divisor (prices come as integers, divide by 100)
 constexpr double PRICE_DIVISOR = 100.0;
+
+bool env_truthy(const char* name) {
+    if (!name) return false;
+    const char* val = std::getenv(name);
+    if (!val) return false;
+    std::string s(val);
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return (s == "1" || s == "true" || s == "yes" || s == "y" || s == "on");
+}
+
+#ifdef _WIN32
+std::string win32_error_message(DWORD err) {
+    LPSTR msg_buf = nullptr;
+    DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
+    DWORD len = FormatMessageA(flags, nullptr, err, 0, reinterpret_cast<LPSTR>(&msg_buf), 0, nullptr);
+    std::string msg = (len && msg_buf) ? std::string(msg_buf, len) : std::string();
+    if (msg_buf) {
+        LocalFree(msg_buf);
+    }
+    // Trim CR/LF
+    while (!msg.empty() && (msg.back() == '\r' || msg.back() == '\n')) {
+        msg.pop_back();
+    }
+    return msg;
+}
+#endif
 
 } // anonymous namespace
 
@@ -262,6 +296,9 @@ void KiteWebSocket::ws_loop() {
     
 #ifdef _WIN32
     int retry_count = 0;
+
+    const bool relax_tls = env_truthy("KITE_WS_RELAX_TLS") || env_truthy("PAYOFF_WS_RELAX_TLS");
+    const bool force_tls12 = !env_truthy("KITE_WS_NO_FORCE_TLS12") && !env_truthy("PAYOFF_WS_NO_FORCE_TLS12");
     
     while (running_) {
         // Initialize WinHTTP session
@@ -276,6 +313,13 @@ void KiteWebSocket::ws_loop() {
             notify_error("Failed to create WinHTTP session");
             handle_reconnect(retry_count);
             continue;
+        }
+
+        if (force_tls12) {
+            // ERROR_WINHTTP_SECURE_FAILURE (12019) is commonly caused by protocol mismatch
+            // or blocked revocation checks; forcing TLS1.2 makes the handshake deterministic.
+            DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
+            WinHttpSetOption(hSession, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols));
         }
         
         // Connect to ws.kite.trade (port 443 for WSS)
@@ -313,6 +357,24 @@ void KiteWebSocket::ws_loop() {
             handle_reconnect(retry_count);
             continue;
         }
+
+        {
+            // Relax revocation failures by default (common on locked-down networks).
+            // If you need to relax more certificate checks (MITM proxies/dev boxes),
+            // set KITE_WS_RELAX_TLS=1.
+            DWORD security_flags = 0;
+            DWORD security_flags_len = sizeof(security_flags);
+            WinHttpQueryOption(hRequest, WINHTTP_OPTION_SECURITY_FLAGS, &security_flags, &security_flags_len);
+
+            security_flags |= SECURITY_FLAG_IGNORE_REVOCATION;
+            if (relax_tls) {
+                security_flags |= SECURITY_FLAG_IGNORE_UNKNOWN_CA |
+                                  SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
+                                  SECURITY_FLAG_IGNORE_CERT_DATE_INVALID |
+                                  SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
+            }
+            WinHttpSetOption(hRequest, WINHTTP_OPTION_SECURITY_FLAGS, &security_flags, sizeof(security_flags));
+        }
         
         // Set WebSocket upgrade option
         BOOL opt = TRUE;
@@ -331,12 +393,40 @@ void KiteWebSocket::ws_loop() {
         
         // Receive response
         if (!WinHttpReceiveResponse(hRequest, nullptr)) {
-            notify_error("Failed to receive WebSocket upgrade response");
+            DWORD err = GetLastError();
+            std::string msg = "Failed to receive WebSocket upgrade response: " + std::to_string(err);
+            auto detail = win32_error_message(err);
+            if (!detail.empty()) msg += " (" + detail + ")";
+            if (err == ERROR_WINHTTP_SECURE_FAILURE) {
+                msg += " [TLS secure failure; check system time/root certs/proxy; optionally set KITE_WS_RELAX_TLS=1]";
+            }
+            notify_error(msg);
             WinHttpCloseHandle(hRequest);
             WinHttpCloseHandle(hConnect);
             WinHttpCloseHandle(hSession);
             handle_reconnect(retry_count);
             continue;
+        }
+
+        // If we didn't get 101 Switching Protocols, report and bail early.
+        {
+            DWORD status_code = 0;
+            DWORD status_len = sizeof(status_code);
+            if (WinHttpQueryHeaders(hRequest,
+                                    WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                    WINHTTP_HEADER_NAME_BY_INDEX,
+                                    &status_code,
+                                    &status_len,
+                                    WINHTTP_NO_HEADER_INDEX)) {
+                if (status_code != 101) {
+                    notify_error("WebSocket upgrade rejected, HTTP status: " + std::to_string(status_code));
+                    WinHttpCloseHandle(hRequest);
+                    WinHttpCloseHandle(hConnect);
+                    WinHttpCloseHandle(hSession);
+                    handle_reconnect(retry_count);
+                    continue;
+                }
+            }
         }
         
         // Complete WebSocket upgrade
@@ -344,6 +434,11 @@ void KiteWebSocket::ws_loop() {
         if (!hWebSocket) {
             DWORD err = GetLastError();
             std::string err_msg = "WebSocket upgrade failed: " + std::to_string(err);
+            auto detail = win32_error_message(err);
+            if (!detail.empty()) err_msg += " (" + detail + ")";
+            if (err == ERROR_WINHTTP_SECURE_FAILURE) {
+                err_msg += " [TLS secure failure; check system time/root certs/proxy; optionally set KITE_WS_RELAX_TLS=1]";
+            }
             notify_error(err_msg);
             WinHttpCloseHandle(hRequest);
             WinHttpCloseHandle(hConnect);

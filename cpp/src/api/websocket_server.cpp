@@ -261,11 +261,11 @@ public:
         // Add best bid/ask
         if (!snap.bids.empty()) {
             json.key("bid").value(snap.bids[0].price)
-                .key("bid_qty").value(static_cast<int64_t>(snap.bids[0].quantity));
+                .key("bid_qty").value(static_cast<int64_t>(snap.bids[0].size));
         }
         if (!snap.asks.empty()) {
             json.key("ask").value(snap.asks[0].price)
-                .key("ask_qty").value(static_cast<int64_t>(snap.asks[0].quantity));
+                .key("ask_qty").value(static_cast<int64_t>(snap.asks[0].size));
         }
         
         json.end_object();
