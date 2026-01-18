@@ -20,7 +20,8 @@ CMAKE_ADDR2LINE:FILEPATH=C:/msys64/mingw64/bin/addr2line.exe
 //Path to a program.
 CMAKE_AR:FILEPATH=C:/msys64/mingw64/bin/ar.exe
 
-//Build type
+//Choose the type of build, options are: None Debug Release RelWithDebInfo
+// MinSizeRel ...
 CMAKE_BUILD_TYPE:STRING=Release
 
 //CXX compiler
@@ -35,7 +36,7 @@ CMAKE_CXX_COMPILER_AR:FILEPATH=C:/msys64/mingw64/bin/gcc-ar.exe
 CMAKE_CXX_COMPILER_RANLIB:FILEPATH=C:/msys64/mingw64/bin/gcc-ranlib.exe
 
 //Flags used by the CXX compiler during all build types.
-CMAKE_CXX_FLAGS:STRING=-static-libgcc -static-libstdc++
+CMAKE_CXX_FLAGS:STRING=-static -static-libgcc -static-libstdc++
 
 //Flags used by the CXX compiler during DEBUG builds.
 CMAKE_CXX_FLAGS_DEBUG:STRING=-g

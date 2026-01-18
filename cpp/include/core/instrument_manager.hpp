@@ -282,6 +282,55 @@ public:
      * @brief Get all unique underlyings
      */
     [[nodiscard]] std::vector<std::string> get_underlyings() const;
+    
+    // ========================================================================
+    // Token Mapping (Kite instrument_token ↔ ClickHouse instrument_id)
+    // ========================================================================
+    // Note: For most instruments, exchange_token == instrument_id in ClickHouse.
+    // But for indices like NIFTY 50, they can differ (e.g., instrument_id = 26000).
+    // These methods allow registering and resolving such mappings.
+    
+    /**
+     * @brief Register a mapping from ClickHouse instrument_id to instrument
+     * 
+     * Use this when ClickHouse stores a different ID than Kite's exchange_token.
+     * Example: NIFTY 50 index has instrument_id = 26000 in ClickHouse.
+     * 
+     * @param clickhouse_id The instrument_id used in ClickHouse
+     * @param instrument_token Kite's instrument_token for this instrument
+     */
+    void register_clickhouse_id(uint32_t clickhouse_id, uint32_t instrument_token);
+    
+    /**
+     * @brief Resolve instrument using ClickHouse's instrument_id
+     * 
+     * First checks the ClickHouse ID mapping, then falls back to exchange_token lookup.
+     * This handles cases where ClickHouse uses a different ID than Kite.
+     * 
+     * @param clickhouse_id The instrument_id from ClickHouse market_data table
+     * @return Pointer to instrument info or nullptr if not found
+     */
+    [[nodiscard]] const InstrumentInfo* resolve_by_clickhouse_id(
+        uint32_t clickhouse_id) const noexcept;
+    
+    /**
+     * @brief Get the ClickHouse instrument_id for a given instrument_token
+     * 
+     * Returns the mapped ClickHouse ID if registered, otherwise returns the
+     * instrument's exchange_token (which is the default assumption).
+     * 
+     * @param instrument_token Kite's instrument_token
+     * @return The ID to use when querying ClickHouse
+     */
+    [[nodiscard]] uint32_t get_clickhouse_id(uint32_t instrument_token) const noexcept;
+    
+    /**
+     * @brief Load common token mappings for known instruments
+     * 
+     * Registers mappings for instruments where ClickHouse uses different IDs.
+     * Currently includes: NIFTY 50 (26000), BANKNIFTY (26009), etc.
+     */
+    void load_common_token_mappings();
 
 private:
     // Primary storage
@@ -293,6 +342,11 @@ private:
     std::unordered_map<std::string, size_t> by_canonical_;
     std::unordered_multimap<std::string, size_t> by_tradingsymbol_;
     std::unordered_multimap<std::string, size_t> by_underlying_;
+    
+    // ClickHouse ID mapping (clickhouse_id -> instrument_token)
+    std::unordered_map<uint32_t, uint32_t> ch_id_to_instrument_token_;
+    // Reverse mapping (instrument_token -> clickhouse_id)
+    std::unordered_map<uint32_t, uint32_t> instrument_token_to_ch_id_;
     
     void build_indices();
     static InstrumentType parse_instrument_type(std::string_view segment, 

@@ -2,11 +2,50 @@
 
 ## Current Status: ✅ BUILD SUCCESSFUL | TESTS PASSING | BACKEND FULLY READY FOR FRONTEND
 
-### LATEST UPDATE - January 18, 2026
+### LATEST UPDATE - January 18, 2026 (Session 2)
 
-**Session Goal:** Architecture review - Fix data source implementations
+**Session Goal:** Implement Replay API endpoints for historical backtesting
 
 ## COMPLETED THIS SESSION ✅
+
+### 5. Replay Service API (Historical Strategy Backtesting)
+- **NEW FILES CREATED**:
+  - `include/api/replay_service.hpp` - Service interface with data structures
+  - `src/api/replay_service.cpp` - Full implementation with ClickHouse integration
+  - `src/api/replay_routes.cpp` - REST API route handlers
+
+- **Replay Service Data Structures** (in replay_service.hpp):
+  - `StrategySnapshot`: Timestamp, underlying price, PnL, Greeks, leg prices
+  - `StrategyReplayRequest/Result`: Replay strategy over time range
+  - `PredictionRequest/Result`: Get predicted payoff at historical time T
+  - `CompareRequest/Result`: Compare prediction vs actual outcome
+  - `ReplaySession`: Session management for step-through replay
+  - `MarketEvent`: Event markers (IV spike, gap, volume surge)
+  - `BatchPayoffRequest/Result`: Batch historical payoff calculation
+
+- **Replay API Endpoints** (in replay_routes.cpp):
+  | Endpoint | Method | Description |
+  |----------|--------|-------------|
+  | `/api/replay/strategy` | POST | Run strategy through historical data |
+  | `/api/replay/prediction` | POST | Get predicted payoff at time T |
+  | `/api/replay/compare` | POST | Compare prediction vs reality |
+  | `/api/replay/session/create` | POST | Create replay session |
+  | `/api/replay/session/state` | GET | Get current session state |
+  | `/api/replay/session/step` | POST | Step session forward |
+  | `/api/replay/session/seek` | POST | Seek to timestamp |
+  | `/api/replay/session` | DELETE | Delete session |
+  | `/api/replay/events` | GET | Get market events in range |
+  | `/api/payoff/historical-batch` | POST | Batch historical payoff |
+
+- **Files Changed**:
+  - `CMakeLists.txt` - Added replay_service.cpp, replay_routes.cpp to payoff_api
+  - `src/api/rest_server.cpp` - Added `setup_replay_routes()` call
+
+- **Build Status**: ✅ 33/33 tests passing
+
+---
+
+## PREVIOUS SESSION (Session 1) ✅
 
 ### 0. Fixed Runtime DLL Issue (Static Linking)
 - Executable was silently crashing with error `0xC0000139` (Entry Point Not Found)

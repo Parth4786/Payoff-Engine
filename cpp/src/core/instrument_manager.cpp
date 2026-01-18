@@ -476,6 +476,8 @@ size_t InstrumentManager::load_with_fallback() {
         if (total > 0) {
             std::cout << "[InstrumentManager] Loaded " << total 
                       << " instruments from Kite API" << std::endl;
+            // Load common token mappings for Kite ↔ ClickHouse ID differences
+            load_common_token_mappings();
             return total;
         }
     } catch (const std::exception& e) {
@@ -489,6 +491,8 @@ size_t InstrumentManager::load_with_fallback() {
         if (total > 0) {
             std::cout << "[InstrumentManager] Loaded " << total 
                       << " instruments from ClickHouse" << std::endl;
+            // Load common token mappings
+            load_common_token_mappings();
         } else {
             std::cerr << "[InstrumentManager] WARNING: No instruments loaded!" << std::endl;
         }
@@ -506,6 +510,8 @@ void InstrumentManager::clear() noexcept {
     by_canonical_.clear();
     by_tradingsymbol_.clear();
     by_underlying_.clear();
+    ch_id_to_instrument_token_.clear();
+    instrument_token_to_ch_id_.clear();
 }
 
 void InstrumentManager::build_indices() {
@@ -636,6 +642,69 @@ std::vector<std::string> InstrumentManager::get_underlyings() const {
     
     std::sort(result.begin(), result.end());
     return result;
+}
+
+// ============================================================================
+// Token Mapping (Kite ↔ ClickHouse)
+// ============================================================================
+
+void InstrumentManager::register_clickhouse_id(uint32_t clickhouse_id, 
+                                                uint32_t instrument_token) {
+    ch_id_to_instrument_token_[clickhouse_id] = instrument_token;
+    instrument_token_to_ch_id_[instrument_token] = clickhouse_id;
+}
+
+const InstrumentInfo* InstrumentManager::resolve_by_clickhouse_id(
+    uint32_t clickhouse_id) const noexcept {
+    // First check if there's a special mapping for this ClickHouse ID
+    auto mapping_it = ch_id_to_instrument_token_.find(clickhouse_id);
+    if (mapping_it != ch_id_to_instrument_token_.end()) {
+        // Found a mapping - use the instrument_token to find the instrument
+        return resolve_by_instrument_token(mapping_it->second);
+    }
+    
+    // No special mapping - assume clickhouse_id == exchange_token (common case)
+    return resolve(clickhouse_id);
+}
+
+uint32_t InstrumentManager::get_clickhouse_id(uint32_t instrument_token) const noexcept {
+    // Check if there's a special mapping for this instrument
+    auto it = instrument_token_to_ch_id_.find(instrument_token);
+    if (it != instrument_token_to_ch_id_.end()) {
+        return it->second;
+    }
+    
+    // No special mapping - use exchange_token (which equals clickhouse instrument_id for most instruments)
+    const auto* inst = resolve_by_instrument_token(instrument_token);
+    return inst ? inst->exchange_token : instrument_token;
+}
+
+void InstrumentManager::load_common_token_mappings() {
+    // Register known mappings where ClickHouse instrument_id differs from Kite's exchange_token
+    // These are typically index instruments
+    
+    // NIFTY 50 Index: ClickHouse uses 26000 as instrument_id
+    // Kite instrument_token for NIFTY 50 is 256265
+    register_clickhouse_id(26000, 256265);
+    
+    // NIFTY Bank Index: ClickHouse uses 26009 as instrument_id
+    // Kite instrument_token for BANKNIFTY is 260105
+    register_clickhouse_id(26009, 260105);
+    
+    // INDIA VIX: ClickHouse uses 26017 as instrument_id
+    // Kite instrument_token for INDIAVIX is 264969
+    register_clickhouse_id(26017, 264969);
+    
+    // NIFTY FIN SERVICE: ClickHouse uses 26037 as instrument_id
+    // Kite instrument_token for FINNIFTY is 257801
+    register_clickhouse_id(26037, 257801);
+    
+    // NIFTY MID SELECT: ClickHouse uses 26074 as instrument_id
+    // Kite instrument_token for MIDCPNIFTY is 288009
+    register_clickhouse_id(26074, 288009);
+    
+    std::cout << "[InstrumentManager] Loaded " << ch_id_to_instrument_token_.size() 
+              << " common ClickHouse ID mappings" << std::endl;
 }
 
 // ============================================================================

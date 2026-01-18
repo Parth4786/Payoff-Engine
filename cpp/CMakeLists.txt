@@ -139,6 +139,8 @@ add_library(payoff_api STATIC
     src/api/dto.cpp
     src/api/screener_routes.cpp
     src/api/screener_websocket.cpp
+    src/api/replay_service.cpp
+    src/api/replay_routes.cpp
     
     # Screener service
     src/screener/screener_service.cpp
