@@ -21,11 +21,11 @@
 #include "payoff/pricing.hpp"
 #include "payoff/models.hpp"
 
-#include <nlohmann/json.hpp>
 
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <cmath>
 
 namespace payoff::api {
 
@@ -78,6 +78,18 @@ public:
     }
     
     JsonBuilder& value(double v) {
+        if (!std::isfinite(v)) {
+            if (std::isinf(v)) {
+                // JSON does not support Infinity, but large exponents are valid JSON numbers.
+                // JSON.parse("1e309") yields Infinity in JS.
+                ss_ << (v > 0 ? "1e309" : "-1e309");
+                return *this;
+            }
+            // NaN: emit a safe numeric value
+            ss_ << "0";
+            return *this;
+        }
+
         ss_ << std::fixed << std::setprecision(4) << v;
         return *this;
     }
@@ -223,21 +235,10 @@ public:
         server.Post("/api/payoff/calculate", [](const http::Request& req, http::Response& res) {
             // Expected: { underlying: "NIFTY", spot: 26300, legs: [...] }
 
-            using nlohmann::json;
-
-            json body;
-            try {
-                body = json::parse(req.body);
-            } catch (...) {
-                res.status = 400;
-                res.set_json("{\"error\":\"invalid JSON body\"}");
-                return;
-            }
-
-            auto underlying = body.value("underlying", std::string("NIFTY"));
+            std::string underlying = json_get_string(req.body, "underlying");
             if (underlying.empty()) underlying = "NIFTY";
 
-            double spot = body.value("spot", 0.0);
+            double spot = json_get_double(req.body, "spot");
             if (spot <= 0) spot = 26300.0;
 
             auto resolve_lot_size = [&](const std::string& u) -> int {
@@ -265,57 +266,77 @@ public:
             const int default_lot_size = resolve_lot_size(underlying);
 
             engine::Strategy strategy;
-            strategy.name = body.value("name", std::string("Custom Strategy"));
+            strategy.name = json_get_string(req.body, "name");
+            if (strategy.name.empty()) strategy.name = "Custom Strategy";
             strategy.underlying = underlying;
             strategy.underlying_price = spot;
 
             // Parse legs
-            if (!body.contains("legs") || !body["legs"].is_array() || body["legs"].empty()) {
-                res.status = 400;
-                res.set_json("{\"error\":\"legs required\"}");
-                return;
-            }
+            auto legs_pos = req.body.find("\"legs\"");
+            if (legs_pos != std::string::npos) {
+                auto arr_start = req.body.find('[', legs_pos);
+                auto arr_end = req.body.find(']', arr_start);
+                if (arr_start != std::string::npos && arr_end != std::string::npos) {
+                    std::string legs_str = req.body.substr(arr_start, arr_end - arr_start + 1);
 
-            for (const auto& leg_json : body["legs"]) {
-                if (!leg_json.is_object()) continue;
+                    size_t pos = 0;
+                    while ((pos = legs_str.find('{', pos)) != std::string::npos) {
+                        auto leg_end = legs_str.find('}', pos);
+                        if (leg_end == std::string::npos) break;
 
-                const auto type_str = leg_json.value("type", std::string("CE"));
-                const auto side_str = leg_json.value("side", std::string("BUY"));
+                        std::string leg_json = legs_str.substr(pos, leg_end - pos + 1);
 
-                engine::OptionLeg leg;
-                leg.type = (type_str == "PE" || type_str == "PUT") ? engine::OptionType::Put : engine::OptionType::Call;
-                leg.side = (side_str == "SELL" || side_str == "sell") ? engine::Side::Sell : engine::Side::Buy;
+                        engine::OptionLeg leg;
 
-                leg.strike = leg_json.value("strike", 0.0);
-                leg.quantity = leg_json.value("qty", 0);
-                if (leg.quantity == 0) leg.quantity = leg_json.value("quantity", 0);
-                if (leg.quantity <= 0) leg.quantity = 1;
+                        std::string type_str = json_get_string(leg_json, "type");
+                        if (type_str == "PE" || type_str == "PUT") {
+                            leg.type = engine::OptionType::Put;
+                        } else {
+                            leg.type = engine::OptionType::Call;
+                        }
 
-                leg.lot_size = leg_json.value("lot", 0);
-                if (leg.lot_size == 0) leg.lot_size = leg_json.value("lot_size", 0);
-                if (leg.lot_size <= 0) leg.lot_size = default_lot_size;
+                        std::string side_str = json_get_string(leg_json, "side");
+                        if (side_str == "SELL" || side_str == "sell") {
+                            leg.side = engine::Side::Sell;
+                        } else {
+                            leg.side = engine::Side::Buy;
+                        }
 
-                leg.premium = leg_json.value("premium", 0.0);
+                        leg.strike = json_get_double(leg_json, "strike");
+                        leg.quantity = static_cast<int>(json_get_double(leg_json, "qty"));
+                        if (leg.quantity == 0) leg.quantity = static_cast<int>(json_get_double(leg_json, "quantity"));
+                        if (leg.quantity <= 0) leg.quantity = 1;
 
-                if (leg.strike > 0) {
-                    strategy.legs.push_back(leg);
+                        leg.lot_size = static_cast<int>(json_get_double(leg_json, "lot"));
+                        if (leg.lot_size == 0) leg.lot_size = static_cast<int>(json_get_double(leg_json, "lot_size"));
+                        if (leg.lot_size <= 0) leg.lot_size = default_lot_size;
+
+                        leg.premium = json_get_double(leg_json, "premium");
+
+                        if (leg.strike > 0) {
+                            strategy.legs.push_back(leg);
+                        }
+
+                        pos = leg_end + 1;
+                    }
                 }
             }
 
             if (strategy.legs.empty()) {
                 res.status = 400;
-                res.set_json("{\"error\":\"no valid legs\"}");
+                res.set_json("{\"error\":\"legs required\"}");
                 return;
             }
 
             // Optional greek assumptions
-            const double iv = body.value("iv", 0.20);
-            const int dte = body.value("dte", 30);
+            const double iv = json_get_double(req.body, "iv");
+            const int dte = json_get_int(req.body, "dte") > 0 ? json_get_int(req.body, "dte") : 30;
+            const double effective_iv = iv > 0 ? iv : 0.20;
             
             // Calculate
             engine::PayoffCalculator calculator;
             auto curve = calculator.calculate_expiry_payoff(strategy);
-            auto greeks = calculator.calculate_strategy_greeks(strategy, iv, dte);
+            auto greeks = calculator.calculate_strategy_greeks(strategy, effective_iv, dte);
             
             // Build response
             JsonBuilder json;
