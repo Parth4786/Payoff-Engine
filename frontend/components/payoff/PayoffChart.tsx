@@ -24,11 +24,13 @@ interface Props {
 export function PayoffChart({ scenario, daysToExpiry }: Props) {
   const { payoffResult, strategy } = useStrategy();
 
+  const fallbackSpot = payoffResult?.spot ?? 26300;
+
   // Generate payoff curve data
   const chartData = useMemo(() => {
     if (!payoffResult?.points || payoffResult.points.length === 0) {
       // Generate placeholder data
-      const spotBase = 26300;
+      const spotBase = fallbackSpot;
       const range = 2000;
       const points: any[] = [];
       
@@ -50,7 +52,7 @@ export function PayoffChart({ scenario, daysToExpiry }: Props) {
 
   // Find key points
   const breakevens = payoffResult?.breakevens || [];
-  const currentSpot = 26300; // TODO: get from market data
+  const currentSpot = fallbackSpot;
 
   // Custom tooltip
   const CustomTooltip = ({ active, payload, label }: any) => {

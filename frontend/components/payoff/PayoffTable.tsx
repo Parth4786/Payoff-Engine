@@ -12,17 +12,18 @@ interface Props {
 export function PayoffTable({ scenario, daysToExpiry }: Props) {
   const { payoffResult, strategy } = useStrategy();
 
+  const baseSpot = payoffResult?.spot ?? 26300;
+
   // Generate spot levels
   const spotLevels = useMemo(() => {
-    const base = 26300; // TODO: use actual spot
     const step = 100;
     const levels: number[] = [];
     
     for (let i = -10; i <= 10; i++) {
-      levels.push(base + i * step);
+      levels.push(baseSpot + i * step);
     }
     return levels;
-  }, []);
+  }, [baseSpot]);
 
   // Get P&L for each level from payoff curve
   const tableData = useMemo(() => {
@@ -52,7 +53,7 @@ export function PayoffTable({ scenario, daysToExpiry }: Props) {
     });
   }, [payoffResult, spotLevels, scenario]);
 
-  const currentSpot = 26300; // TODO: use actual
+  const currentSpot = baseSpot;
 
   return (
     <div className="max-h-[400px] overflow-auto">
