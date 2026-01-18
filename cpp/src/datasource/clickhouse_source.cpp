@@ -1,6 +1,6 @@
 /**
  * @file clickhouse_source.cpp
- * @brief ClickHouse data source - full HTTP API implementation
+ * @brief ClickHouse data source - uses shared HTTP helper
  * 
  * Uses HTTP interface for:
  * - Historical replay (deterministic ordering)
@@ -9,7 +9,8 @@
 
 #include "core/datasource.hpp"
 #include "core/config.hpp"
-#include "core/http_client.hpp"
+#include "core/clickhouse_http.hpp"
+#include "core/instrument_manager.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -24,51 +25,9 @@
 #include <thread>
 #include <vector>
 
-#ifdef _WIN32
-    #include <winsock2.h>
-    #include <ws2tcpip.h>
-    #pragma comment(lib, "ws2_32.lib")
-    #define CLOSE_SOCKET closesocket
-    using SOCKET_TYPE = SOCKET;
-#else
-    #include <sys/socket.h>
-    #include <netinet/in.h>
-    #include <arpa/inet.h>
-    #include <netdb.h>
-    #include <unistd.h>
-    #define CLOSE_SOCKET close
-    #define INVALID_SOCKET -1
-    using SOCKET_TYPE = int;
-#endif
-
 namespace payoff::core {
 
 namespace {
-
-#ifdef _WIN32
-void ensure_winsock_initialized() {
-    static std::once_flag once;
-    std::call_once(once, []() {
-        WSADATA wsa{};
-        const int rc = WSAStartup(MAKEWORD(2, 2), &wsa);
-        if (rc != 0) {
-            throw std::runtime_error("WSAStartup failed: " + std::to_string(rc));
-        }
-        std::atexit([]() { WSACleanup(); });
-    });
-}
-#endif
-
-// Parse tab-separated value row
-std::vector<std::string> parse_tsv_row(const std::string& line) {
-    std::vector<std::string> cols;
-    std::stringstream ss(line);
-    std::string col;
-    while (std::getline(ss, col, '\t')) {
-        cols.push_back(col);
-    }
-    return cols;
-}
 
 // Convert milliseconds timestamp to string for SQL
 std::string ms_to_sql_datetime(int64_t ms) {
@@ -82,7 +41,7 @@ std::string ms_to_sql_datetime(int64_t ms) {
 } // anonymous namespace
 
 // ============================================================================
-// ClickHouseSource - Full Implementation
+// ClickHouseSource - Full Implementation (uses shared HTTP helper)
 // ============================================================================
 
 class ClickHouseSource : public MarketDataSource {
@@ -91,11 +50,14 @@ public:
                      const std::string& database, 
                      const std::string& username = "default",
                      const std::string& password = "")
-        : host_(host)
-        , port_(port)
-        , database_(database)
-        , username_(username)
-        , password_(password) {
+        : instrument_manager_(nullptr) {
+        
+        // Configure HTTP client
+        ch_config_.host = host;
+        ch_config_.port = port;
+        ch_config_.database = database;
+        ch_config_.username = username;
+        ch_config_.password = password;
         
         // Get table name from config
         table_ = config::config().ch_table();
@@ -104,7 +66,14 @@ public:
         }
         
         // Test connection
-        connected_ = ping();
+        connected_ = clickhouse_ping(ch_config_);
+    }
+    
+    /**
+     * @brief Set instrument manager for exchange_token resolution
+     */
+    void set_instrument_manager(std::shared_ptr<InstrumentManager> mgr) {
+        instrument_manager_ = std::move(mgr);
     }
     
     Source get_source_type() const noexcept override {
@@ -112,7 +81,8 @@ public:
     }
     
     std::string get_name() const override {
-        return "ClickHouse:" + host_ + ":" + std::to_string(port_) + "/" + database_;
+        return "ClickHouse:" + ch_config_.host + ":" + 
+               std::to_string(ch_config_.port) + "/" + ch_config_.database;
     }
     
     bool is_connected() const noexcept override {
@@ -122,17 +92,37 @@ public:
     std::vector<std::string> get_symbols() const override {
         std::vector<std::string> symbols;
         
-        std::string query = "SELECT DISTINCT instrument_token FROM " + 
-                            database_ + "." + table_ + " LIMIT 1000";
+        std::string query = "SELECT DISTINCT instrument_id FROM " + 
+                            ch_config_.database + "." + table_ + " LIMIT 1000 FORMAT TabSeparated";
         
-        std::string result = execute_query(query);
-        
-        std::istringstream ss(result);
-        std::string line;
-        while (std::getline(ss, line)) {
-            if (!line.empty()) {
-                symbols.push_back(line);
+        try {
+            std::string result = clickhouse_execute_query(ch_config_, query);
+            
+            std::istringstream ss(result);
+            std::string line;
+            while (std::getline(ss, line)) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (!line.empty()) {
+                    // Resolve exchange_token to canonical symbol using InstrumentManager
+                    if (instrument_manager_) {
+                        try {
+                            uint32_t exchange_token = static_cast<uint32_t>(std::stoul(line));
+                            if (auto* inst = instrument_manager_->resolve(exchange_token)) {
+                                symbols.push_back(inst->canonical_symbol());
+                            } else {
+                                // Fallback: use raw token as symbol
+                                symbols.push_back(line);
+                            }
+                        } catch (...) {
+                            symbols.push_back(line);
+                        }
+                    } else {
+                        symbols.push_back(line);
+                    }
+                }
             }
+        } catch (...) {
+            // Return empty on error
         }
         
         return symbols;
@@ -162,46 +152,61 @@ public:
             throw std::runtime_error("Not connected to ClickHouse");
         }
         
-        // Build query
+        // Build query - note: instrument_id in ClickHouse = exchange_token
         std::ostringstream query;
-        query << "SELECT instrument_token, tradingsymbol, "
+        query << "SELECT instrument_id, tradingsymbol, "
               << "toUnixTimestamp64Milli(exchange_timestamp) as ts_ms, "
               << "last_price, volume, "
               << "bid_price, bid_quantity, ask_price, ask_quantity, "
               << "open_interest "
-              << "FROM " << database_ << "." << table_ << " "
+              << "FROM " << ch_config_.database << "." << table_ << " "
               << "WHERE exchange_timestamp >= '" << ms_to_sql_datetime(range.start.count()) << "' "
               << "AND exchange_timestamp <= '" << ms_to_sql_datetime(range.end.count()) << "' ";
         
         if (!symbols.empty()) {
-            query << "AND instrument_token IN (";
-            for (size_t i = 0; i < symbols.size(); ++i) {
-                if (i > 0) query << ",";
-                query << symbols[i];
+            // Resolve canonical symbols to exchange_tokens
+            std::vector<uint32_t> exchange_tokens;
+            for (const auto& sym : symbols) {
+                // Handle both raw tokens and canonical symbols
+                if (sym.find(':') != std::string::npos && instrument_manager_) {
+                    // Canonical format "NFO:49543" - extract token
+                    auto pos = sym.find(':');
+                    try {
+                        uint32_t token = static_cast<uint32_t>(std::stoul(sym.substr(pos + 1)));
+                        exchange_tokens.push_back(token);
+                    } catch (...) {}
+                } else {
+                    // Try as raw token
+                    try {
+                        exchange_tokens.push_back(static_cast<uint32_t>(std::stoul(sym)));
+                    } catch (...) {}
+                }
             }
-            query << ") ";
+            
+            if (!exchange_tokens.empty()) {
+                query << "AND instrument_id IN (";
+                for (size_t i = 0; i < exchange_tokens.size(); ++i) {
+                    if (i > 0) query << ",";
+                    query << exchange_tokens[i];
+                }
+                query << ") ";
+            }
         }
         
         query << "ORDER BY exchange_timestamp ASC "
               << "FORMAT TabSeparated";
         
-        std::string result = execute_query(query.str());
-        
-        // Parse results and invoke callback
+        // Stream results via shared helper
         size_t count = 0;
-        std::istringstream ss(result);
-        std::string line;
-        
-        while (std::getline(ss, line)) {
-            if (line.empty()) continue;
-            
-            auto cols = parse_tsv_row(line);
-            if (cols.size() < 10) continue;
-            
-            DepthSnapshot snap = parse_row_to_snapshot(cols);
-            callback(snap);
-            count++;
-        }
+        clickhouse_query_stream(ch_config_, query.str(), 
+            [&](const std::vector<std::string>& cols) {
+                if (cols.size() < 10) return true;  // Skip invalid rows
+                
+                DepthSnapshot snap = parse_row_to_snapshot(cols);
+                callback(snap);
+                count++;
+                return true;  // Continue iteration
+            });
         
         return count;
     }
@@ -228,23 +233,28 @@ public:
                 try {
                     // Query for new data since watermark
                     std::ostringstream query;
-                    query << "SELECT instrument_token, tradingsymbol, "
+                    query << "SELECT instrument_id, tradingsymbol, "
                           << "toUnixTimestamp64Milli(exchange_timestamp) as ts_ms, "
                           << "last_price, volume, "
                           << "bid_price, bid_quantity, ask_price, ask_quantity, "
                           << "open_interest "
-                          << "FROM " << database_ << "." << table_ << " "
+                          << "FROM " << ch_config_.database << "." << table_ << " "
                           << "WHERE toUnixTimestamp64Milli(exchange_timestamp) > " << watermark_ << " ";
                     
-                    // Filter by subscribed symbols if any
+                    // Filter by subscribed symbols (as exchange_tokens)
                     {
                         std::lock_guard<std::mutex> lock(subscription_mutex_);
                         if (!subscribed_symbols_.empty()) {
-                            query << "AND instrument_token IN (";
+                            query << "AND instrument_id IN (";
                             bool first = true;
                             for (const auto& sym : subscribed_symbols_) {
+                                // Extract exchange_token from canonical symbol
+                                std::string token_str = sym;
+                                if (sym.find(':') != std::string::npos) {
+                                    token_str = sym.substr(sym.find(':') + 1);
+                                }
                                 if (!first) query << ",";
-                                query << sym;
+                                query << token_str;
                                 first = false;
                             }
                             query << ") ";
@@ -255,28 +265,22 @@ public:
                           << "LIMIT " << batch_size << " "
                           << "FORMAT TabSeparated";
                     
-                    std::string result = execute_query(query.str());
-                    
-                    // Parse and dispatch
-                    std::istringstream ss(result);
-                    std::string line;
-                    
-                    while (std::getline(ss, line)) {
-                        if (line.empty()) continue;
-                        
-                        auto cols = parse_tsv_row(line);
-                        if (cols.size() < 10) continue;
-                        
-                        DepthSnapshot snap = parse_row_to_snapshot(cols);
-                        
-                        // Update watermark
-                        int64_t ts_ms = snap.exchange_timestamp.count();
-                        if (ts_ms > watermark_) {
-                            watermark_ = ts_ms;
-                        }
-                        
-                        callback(snap);
-                    }
+                    // Stream using shared helper
+                    clickhouse_query_stream(ch_config_, query.str(),
+                        [&](const std::vector<std::string>& cols) {
+                            if (cols.size() < 10) return true;
+                            
+                            DepthSnapshot snap = parse_row_to_snapshot(cols);
+                            
+                            // Update watermark
+                            int64_t ts_ms = snap.exchange_timestamp.count();
+                            if (ts_ms > watermark_) {
+                                watermark_ = ts_ms;
+                            }
+                            
+                            callback(snap);
+                            return true;
+                        });
                     
                 } catch (const std::exception& e) {
                     if (error_callback) {
@@ -302,12 +306,9 @@ public:
     }
 
 private:
-    std::string host_;
-    uint16_t port_;
-    std::string database_;
-    std::string username_;
-    std::string password_;
+    ClickHouseHttpConfig ch_config_;
     std::string table_;
+    std::shared_ptr<InstrumentManager> instrument_manager_;
     
     bool connected_ = false;
     std::atomic<bool> streaming_{false};
@@ -319,131 +320,29 @@ private:
     mutable std::mutex subscription_mutex_;
     
     // ========================================================================
-    // HTTP Client
+    // Helper Methods
     // ========================================================================
-    
-    bool ping() const {
-        try {
-            std::string result = execute_query("SELECT 1");
-            return result.find("1") != std::string::npos;
-        } catch (...) {
-            return false;
-        }
-    }
     
     int64_t get_max_timestamp() const {
         std::string query = "SELECT max(toUnixTimestamp64Milli(exchange_timestamp)) FROM " +
-                            database_ + "." + table_;
-        std::string result = execute_query(query);
-        
+                            ch_config_.database + "." + table_ + " FORMAT TabSeparated";
         try {
+            std::string result = clickhouse_execute_query(ch_config_, query);
+            // Trim whitespace
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
+                result.pop_back();
+            }
             return std::stoll(result);
         } catch (...) {
             return 0;
         }
     }
     
-    std::string execute_query(const std::string& query) const {
-#ifdef _WIN32
-        ensure_winsock_initialized();
-#endif
-        // Build HTTP POST request to ClickHouse
-        std::ostringstream http_request;
-        
-        // URL encode query for safety
-        std::string path = "/?database=" + core::HttpClient::url_encode(database_);
-        if (!username_.empty()) {
-            path += "&user=" + core::HttpClient::url_encode(username_);
-        }
-        if (!password_.empty()) {
-            path += "&password=" + core::HttpClient::url_encode(password_);
-        }
-        
-        http_request << "POST " << path << " HTTP/1.1\r\n"
-                     << "Host: " << host_ << ":" << port_ << "\r\n"
-                     << "Content-Type: text/plain\r\n"
-                     << "Content-Length: " << query.length() << "\r\n"
-                     << "Connection: close\r\n"
-                     << "\r\n"
-                     << query;
-        
-        // Create socket and connect
-        SOCKET_TYPE sock = socket(AF_INET, SOCK_STREAM, 0);
-        if (sock == INVALID_SOCKET) {
-            throw std::runtime_error("Failed to create socket");
-        }
-        
-        struct sockaddr_in server;
-        server.sin_family = AF_INET;
-        server.sin_port = htons(port_);
-        
-        // Resolve hostname
-        struct hostent* he = gethostbyname(host_.c_str());
-        if (!he) {
-            CLOSE_SOCKET(sock);
-            throw std::runtime_error("Failed to resolve hostname: " + host_);
-        }
-        
-        memcpy(&server.sin_addr, he->h_addr_list[0], static_cast<size_t>(he->h_length));
-        
-        if (::connect(sock, reinterpret_cast<struct sockaddr*>(&server), sizeof(server)) < 0) {
-            CLOSE_SOCKET(sock);
-            throw std::runtime_error("Failed to connect to ClickHouse");
-        }
-        
-        // Send request
-        std::string req = http_request.str();
-        send(sock, req.c_str(), static_cast<int>(req.length()), 0);
-        
-        // Receive response
-        std::string response;
-        char buffer[4096];
-        int bytes;
-        
-        while ((bytes = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
-            buffer[bytes] = '\0';
-            response += buffer;
-        }
-        
-        CLOSE_SOCKET(sock);
-        
-        // Parse HTTP response - extract body after headers
-        // Validate status line if present
-        auto status_end = response.find("\r\n");
-        if (status_end != std::string::npos) {
-            std::string status_line = response.substr(0, status_end);
-            // Expect: HTTP/1.1 200 OK
-            auto first_sp = status_line.find(' ');
-            if (first_sp != std::string::npos) {
-                auto second_sp = status_line.find(' ', first_sp + 1);
-                std::string code_str = (second_sp == std::string::npos)
-                    ? status_line.substr(first_sp + 1)
-                    : status_line.substr(first_sp + 1, second_sp - (first_sp + 1));
-                try {
-                    int code = std::stoi(code_str);
-                    if (code < 200 || code >= 300) {
-                        auto body_start = response.find("\r\n\r\n");
-                        std::string body = (body_start != std::string::npos) ? response.substr(body_start + 4) : response;
-                        throw std::runtime_error("ClickHouse HTTP " + std::to_string(code) + ": " + body);
-                    }
-                } catch (...) {
-                    // ignore parse issues
-                }
-            }
-        }
-        auto body_start = response.find("\r\n\r\n");
-        if (body_start != std::string::npos) {
-            return response.substr(body_start + 4);
-        }
-        
-        return response;
-    }
-    
     DepthSnapshot parse_row_to_snapshot(const std::vector<std::string>& cols) const {
         DepthSnapshot snap;
         
         // Expected columns:
-        // 0: instrument_token
+        // 0: instrument_id (= exchange_token in our model)
         // 1: tradingsymbol
         // 2: ts_ms
         // 3: last_price
@@ -455,8 +354,21 @@ private:
         // 9: open_interest
         
         try {
-            snap.instrument_id = static_cast<uint32_t>(std::stoul(cols[0]));
-            snap.symbol = cols[1];
+            // instrument_id from ClickHouse IS the exchange_token
+            uint32_t exchange_token = static_cast<uint32_t>(std::stoul(cols[0]));
+            snap.instrument_id = exchange_token;
+            
+            // Build canonical symbol using InstrumentManager if available
+            if (instrument_manager_) {
+                if (auto* inst = instrument_manager_->resolve(exchange_token)) {
+                    snap.symbol = inst->canonical_symbol();
+                } else {
+                    // Fallback: construct from tradingsymbol
+                    snap.symbol = "UNKNOWN:" + std::to_string(exchange_token);
+                }
+            } else {
+                snap.symbol = cols[1];  // Use tradingsymbol from data
+            }
             
             int64_t ts_ms = std::stoll(cols[2]);
             snap.exchange_timestamp = Timestamp(ts_ms);
@@ -492,7 +404,7 @@ private:
 };
 
 // ============================================================================
-// Factory
+// Factory Functions
 // ============================================================================
 
 std::unique_ptr<MarketDataSource> create_clickhouse_source(
@@ -507,17 +419,14 @@ std::unique_ptr<MarketDataSource> create_clickhouse_source(
 }
 
 std::unique_ptr<MarketDataSource> create_clickhouse_source_from_config() {
-    auto& cfg = config::config();
-    if (!cfg.is_loaded()) {
-        cfg.load();
-    }
+    auto ch_cfg = ClickHouseHttpConfig::from_config();
     
     return std::make_unique<ClickHouseSource>(
-        cfg.ch_host(),
-        static_cast<uint16_t>(cfg.ch_port()),
-        cfg.ch_database(),
-        cfg.ch_username(),
-        cfg.ch_password());
+        ch_cfg.host,
+        ch_cfg.port,
+        ch_cfg.database,
+        ch_cfg.username,
+        ch_cfg.password);
 }
 
 } // namespace payoff::core

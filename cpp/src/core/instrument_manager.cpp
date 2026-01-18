@@ -4,10 +4,15 @@
  */
 
 #include "core/instrument_manager.hpp"
+#include "core/clickhouse_http.hpp"
+#include "core/config.hpp"
+
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
@@ -215,6 +220,189 @@ size_t InstrumentManager::load_directory(const std::string& directory) {
         } catch (...) {
             // Skip files that fail to parse
         }
+    }
+    
+    return total;
+}
+
+// ============================================================================
+// ClickHouse Loading
+// ============================================================================
+
+size_t InstrumentManager::load_from_clickhouse(const std::string& database,
+                                                const std::string& table) {
+    auto ch_cfg = ClickHouseHttpConfig::from_config();
+    
+    // Override database if provided
+    if (!database.empty()) {
+        ch_cfg.database = database;
+    }
+    
+    std::string tbl = table.empty() ? "instruments" : table;
+    
+    // Query all instrument master data
+    // Expected schema matches Kite instrument dump format
+    std::string query = 
+        "SELECT "
+        "  instrument_token, "
+        "  exchange_token, "
+        "  tradingsymbol, "
+        "  name, "
+        "  exchange, "
+        "  segment, "
+        "  lot_size, "
+        "  tick_size, "
+        "  expiry, "
+        "  strike "
+        "FROM " + ch_cfg.database + "." + tbl + " "
+        "FORMAT TabSeparated";
+    
+    size_t loaded = 0;
+    
+    try {
+        clickhouse_query_stream(ch_cfg, query, [&](const std::vector<std::string>& cols) {
+            if (cols.size() < 8) return true;  // Skip invalid rows
+            
+            InstrumentInfo info;
+            
+            try {
+                // Column 0: instrument_token
+                info.instrument_token = static_cast<uint32_t>(std::stoul(cols[0]));
+                
+                // Column 1: exchange_token (THIS is the instrument_id for matching)
+                info.exchange_token = static_cast<uint32_t>(std::stoul(cols[1]));
+                
+                // Column 2: tradingsymbol
+                info.tradingsymbol = cols[2];
+                
+                // Column 3: name
+                if (cols.size() > 3) info.name = cols[3];
+                
+                // Column 4: exchange
+                if (cols.size() > 4) {
+                    info.exchange = exchange_from_string(cols[4]);
+                }
+                
+                // Column 5: segment
+                if (cols.size() > 5) {
+                    info.segment = cols[5];
+                    info.instrument_type = parse_instrument_type(
+                        info.segment, info.tradingsymbol);
+                }
+                
+                // Column 6: lot_size
+                if (cols.size() > 6 && !cols[6].empty()) {
+                    try {
+                        info.lot_size = std::stoi(cols[6]);
+                    } catch (...) {
+                        info.lot_size = 1;
+                    }
+                }
+                
+                // Column 7: tick_size
+                if (cols.size() > 7 && !cols[7].empty()) {
+                    try {
+                        info.tick_size = std::stod(cols[7]);
+                    } catch (...) {
+                        info.tick_size = 0.05;
+                    }
+                }
+                
+                // Column 8: expiry (may be NULL represented as \N or empty)
+                if (cols.size() > 8 && !cols[8].empty() && cols[8] != "\\N") {
+                    // Parse YYYY-MM-DD format
+                    try {
+                        int year, month, day;
+                        if (std::sscanf(cols[8].c_str(), "%d-%d-%d", &year, &month, &day) == 3) {
+                            info.expiry = std::chrono::year_month_day{
+                                std::chrono::year{year},
+                                std::chrono::month{static_cast<unsigned>(month)},
+                                std::chrono::day{static_cast<unsigned>(day)}
+                            };
+                        }
+                    } catch (...) {}
+                }
+                
+                // Column 9: strike (may be NULL)
+                if (cols.size() > 9 && !cols[9].empty() && cols[9] != "\\N") {
+                    try {
+                        double strike = std::stod(cols[9]);
+                        if (strike > 0) info.strike = strike;
+                    } catch (...) {}
+                }
+                
+                // Extract underlying from tradingsymbol
+                if (!info.tradingsymbol.empty()) {
+                    size_t i = 0;
+                    while (i < info.tradingsymbol.size() && 
+                           !std::isdigit(static_cast<unsigned char>(info.tradingsymbol[i]))) {
+                        ++i;
+                    }
+                    if (i > 0) {
+                        info.underlying = info.tradingsymbol.substr(0, i);
+                    }
+                }
+                
+                instruments_.push_back(std::move(info));
+                ++loaded;
+                
+            } catch (const std::exception& e) {
+                // Skip invalid rows
+            }
+            
+            return true;  // Continue iteration
+        });
+        
+        // Rebuild indices after loading
+        if (loaded > 0) {
+            build_indices();
+        }
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to load instruments from ClickHouse: " << e.what() << std::endl;
+    }
+    
+    return loaded;
+}
+
+size_t InstrumentManager::load_with_fallback() {
+    auto& cfg = config::config();
+    if (!cfg.is_loaded()) {
+        cfg.load();
+    }
+    
+    size_t total = 0;
+    
+    // Strategy 1: Try loading from directory
+    std::string instrument_dir = cfg.kite_instrument_dir();
+    if (!instrument_dir.empty()) {
+        try {
+            namespace fs = std::filesystem;
+            if (fs::exists(instrument_dir) && fs::is_directory(instrument_dir)) {
+                total = load_directory(instrument_dir);
+                if (total > 0) {
+                    std::cout << "[InstrumentManager] Loaded " << total 
+                              << " instruments from directory: " << instrument_dir << std::endl;
+                    return total;
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[InstrumentManager] Directory load failed: " << e.what() << std::endl;
+        }
+    }
+    
+    // Strategy 2: Fallback to ClickHouse
+    std::cout << "[InstrumentManager] Falling back to ClickHouse instrument dump..." << std::endl;
+    try {
+        total = load_from_clickhouse();
+        if (total > 0) {
+            std::cout << "[InstrumentManager] Loaded " << total 
+                      << " instruments from ClickHouse" << std::endl;
+        } else {
+            std::cerr << "[InstrumentManager] WARNING: No instruments loaded!" << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[InstrumentManager] ClickHouse load failed: " << e.what() << std::endl;
     }
     
     return total;

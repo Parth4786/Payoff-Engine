@@ -1,5 +1,5 @@
 #include "core/clickhouse_http.hpp"
-
+#include "core/config.hpp"
 #include "core/http_client.hpp"
 
 #include <algorithm>
@@ -44,7 +44,7 @@ void ensure_winsock_initialized() {
 }
 #endif
 
-std::vector<std::string> parse_tsv_row(const std::string& line) {
+std::vector<std::string> parse_tsv_row_internal(const std::string& line) {
     std::vector<std::string> cols;
     std::stringstream ss(line);
     std::string col;
@@ -55,6 +55,29 @@ std::vector<std::string> parse_tsv_row(const std::string& line) {
 }
 
 } // namespace
+
+// ============================================================================
+// Config Factory
+// ============================================================================
+
+ClickHouseHttpConfig ClickHouseHttpConfig::from_config() {
+    auto& cfg = config::config();
+    if (!cfg.is_loaded()) {
+        cfg.load();
+    }
+    
+    ClickHouseHttpConfig ch_cfg;
+    ch_cfg.host = cfg.ch_host();
+    ch_cfg.port = static_cast<uint16_t>(cfg.ch_port());
+    ch_cfg.database = cfg.ch_database();
+    ch_cfg.username = cfg.ch_username();
+    ch_cfg.password = cfg.ch_password();
+    return ch_cfg;
+}
+
+// ============================================================================
+// Core Query Execution
+// ============================================================================
 
 std::string clickhouse_execute_query(const ClickHouseHttpConfig& cfg, const std::string& query) {
 #ifdef _WIN32
@@ -135,6 +158,8 @@ std::string clickhouse_execute_query(const ClickHouseHttpConfig& cfg, const std:
                         : response;
                     throw std::runtime_error("ClickHouse HTTP " + std::to_string(code) + ": " + body);
                 }
+            } catch (const std::runtime_error&) {
+                throw;  // Re-throw ClickHouse errors
             } catch (...) {
                 // ignore parse issues
             }
@@ -147,6 +172,69 @@ std::string clickhouse_execute_query(const ClickHouseHttpConfig& cfg, const std:
     }
 
     return response;
+}
+
+// ============================================================================
+// TSV Parsing Helpers
+// ============================================================================
+
+std::vector<std::vector<std::string>> clickhouse_parse_tsv(const std::string& body) {
+    std::vector<std::vector<std::string>> rows;
+    std::istringstream ss(body);
+    std::string line;
+    
+    while (std::getline(ss, line)) {
+        // Handle CRLF
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (line.empty()) continue;
+        
+        rows.push_back(parse_tsv_row_internal(line));
+    }
+    
+    return rows;
+}
+
+size_t clickhouse_query_stream(
+    const ClickHouseHttpConfig& cfg,
+    const std::string& query,
+    ClickHouseRowCallback callback) {
+    
+    std::string body = clickhouse_execute_query(cfg, query);
+    
+    size_t count = 0;
+    std::istringstream ss(body);
+    std::string line;
+    
+    while (std::getline(ss, line)) {
+        // Handle CRLF
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (line.empty()) continue;
+        
+        auto cols = parse_tsv_row_internal(line);
+        if (!callback(cols)) {
+            break;  // Callback returned false, stop iteration
+        }
+        ++count;
+    }
+    
+    return count;
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+bool clickhouse_ping(const ClickHouseHttpConfig& cfg) {
+    try {
+        std::string result = clickhouse_execute_query(cfg, "SELECT 1");
+        return result.find("1") != std::string::npos;
+    } catch (...) {
+        return false;
+    }
 }
 
 std::vector<std::string> clickhouse_describe_table(
@@ -165,7 +253,7 @@ std::vector<std::string> clickhouse_describe_table(
     std::string line;
     while (std::getline(ss, line)) {
         if (line.empty()) continue;
-        auto parts = parse_tsv_row(line);
+        auto parts = parse_tsv_row_internal(line);
         if (!parts.empty() && !parts[0].empty()) {
             cols.push_back(parts[0]);
         }

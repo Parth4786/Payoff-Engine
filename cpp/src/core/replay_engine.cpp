@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <iostream>
 #include <mutex>
 #include <numeric>
 #include <thread>
@@ -389,22 +390,17 @@ std::unique_ptr<PayoffReplayEngine> create_replay_engine_from_config() {
     }
     
     // Create ClickHouse data source
-    auto data_source = create_clickhouse_source(
-        cfg.ch_host(),
-        static_cast<uint16_t>(cfg.ch_port()),
-        cfg.ch_database());
+    auto data_source = create_clickhouse_source_from_config();
     
-    // Create instrument manager
+    // Create instrument manager and load with fallback strategy
+    // (directory first, then ClickHouse instrument dump)
     auto instrument_manager = std::make_shared<InstrumentManager>();
+    size_t loaded = instrument_manager->load_with_fallback();
     
-    // Try to load instruments from configured directory
-    std::string inst_dir = cfg.get("KITE_INSTRUMENT_MASTER_DIR", "");
-    if (!inst_dir.empty()) {
-        try {
-            instrument_manager->load_directory(inst_dir);
-        } catch (...) {
-            // Continue without instruments
-        }
+    if (loaded == 0) {
+        // Log warning but continue - replay will work with raw tokens
+        std::cerr << "[ReplayEngine] WARNING: No instruments loaded. "
+                  << "Symbol resolution will be limited." << std::endl;
     }
     
     return std::make_unique<PayoffReplayEngine>(

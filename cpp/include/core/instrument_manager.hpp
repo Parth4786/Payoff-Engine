@@ -157,6 +157,42 @@ public:
     size_t load_directory(const std::string& directory);
     
     /**
+     * @brief Load instruments from ClickHouse instrument dump
+     * 
+     * Queries ClickHouse for instrument master data. This is a fallback
+     * when local CSV files are not available.
+     * 
+     * Expected table schema:
+     *   - instrument_token: UInt32
+     *   - exchange_token: UInt32
+     *   - tradingsymbol: String
+     *   - name: String
+     *   - exchange: String
+     *   - segment: String
+     *   - lot_size: UInt32
+     *   - tick_size: Float64
+     *   - expiry: Nullable(Date)
+     *   - strike: Nullable(Float64)
+     * 
+     * @param database ClickHouse database name
+     * @param table Table name (default: "instruments")
+     * @return Number of instruments loaded
+     */
+    size_t load_from_clickhouse(const std::string& database = "",
+                                const std::string& table = "instruments");
+    
+    /**
+     * @brief Load instruments with fallback: directory first, then ClickHouse
+     * 
+     * Strategy:
+     * 1. Try load_directory() from KITE_INSTRUMENT_MASTER_DIR config
+     * 2. If no instruments loaded, try load_from_clickhouse()
+     * 
+     * @return Total number of instruments loaded
+     */
+    size_t load_with_fallback();
+    
+    /**
      * @brief Clear all loaded instruments
      */
     void clear() noexcept;

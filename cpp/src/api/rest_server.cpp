@@ -536,6 +536,9 @@ public:
 // Server Startup
 // ============================================================================
 
+// Forward declaration from screener_routes.cpp
+void setup_screener_routes(http::Server& server);
+
 void start_rest_server(int port) {
     http::Server server;
     server.enable_cors();
@@ -543,7 +546,11 @@ void start_rest_server(int port) {
     RestApi api;
     api.setup_routes(server);
     
+    // Add screener routes
+    setup_screener_routes(server);
+    
     std::cout << "Starting REST API server on port " << port << std::endl;
+    std::cout << "Screener endpoints available at /api/screener/*" << std::endl;
     server.listen("0.0.0.0", port);
 }
 

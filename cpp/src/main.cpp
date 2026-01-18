@@ -379,14 +379,17 @@ int main(int argc, char* argv[]) {
     std::cout << "\nLoading instruments..." << std::endl;
     try {
         auto& inst_mgr = core::get_instrument_manager();
-        std::string inst_dir = cfg.get("KITE_INSTRUMENT_MASTER_DIR", "");
-        if (!inst_dir.empty()) {
-            size_t count = inst_mgr.load_directory(inst_dir);
-            std::cout << "  ✓ Loaded " << count << " instruments" << std::endl;
+        // Use fallback strategy: directory first, then ClickHouse
+        size_t count = inst_mgr.load_with_fallback();
+        if (count > 0) {
+            std::cout << "  ✓ Loaded " << count << " instruments total" << std::endl;
             std::cout << "  ✓ NSE: " << inst_mgr.count_by_exchange(core::Exchange::NSE) << std::endl;
             std::cout << "  ✓ NFO: " << inst_mgr.count_by_exchange(core::Exchange::NFO) << std::endl;
+            std::cout << "  ✓ BSE: " << inst_mgr.count_by_exchange(core::Exchange::BSE) << std::endl;
+            std::cout << "  ✓ BFO: " << inst_mgr.count_by_exchange(core::Exchange::BFO) << std::endl;
         } else {
-            std::cout << "  ! No instrument directory configured" << std::endl;
+            std::cout << "  ! WARNING: No instruments loaded" << std::endl;
+            std::cout << "    Set KITE_INSTRUMENT_MASTER_DIR or ensure ClickHouse has instruments table" << std::endl;
         }
     } catch (const std::exception& e) {
         std::cout << "  ✗ Instruments: " << e.what() << std::endl;

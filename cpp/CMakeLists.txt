@@ -136,6 +136,11 @@ add_library(payoff_api STATIC
     src/api/websocket_server.cpp
     src/api/routes.cpp
     src/api/dto.cpp
+    src/api/screener_routes.cpp
+    src/api/screener_websocket.cpp
+    
+    # Screener service
+    src/screener/screener_service.cpp
 )
 
 target_link_libraries(payoff_api PUBLIC payoff_core)
