@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <chrono>
 #include <functional>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -303,7 +304,18 @@ private:
             bool found = false;
             for (const auto& route : routes_) {
                 if (route.method == req.method && match_pattern(route.pattern, req.path)) {
-                    route.handler(req, res);
+                    try {
+                        route.handler(req, res);
+                    } catch (const std::exception& e) {
+                        res.status = 500;
+                        res.set_json("{\"error\": \"Internal Server Error\", \"message\": \"" + 
+                                     std::string(e.what()) + "\"}");
+                        std::cerr << "[HTTP] Exception in handler: " << e.what() << std::endl;
+                    } catch (...) {
+                        res.status = 500;
+                        res.set_json("{\"error\": \"Internal Server Error\"}");
+                        std::cerr << "[HTTP] Unknown exception in handler" << std::endl;
+                    }
                     found = true;
                     break;
                 }

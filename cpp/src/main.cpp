@@ -23,6 +23,11 @@
 #include "streaming/pipeline.hpp"
 #include "cache/market_cache.hpp"
 
+// Forward declaration for REST server
+namespace payoff::api {
+    void start_rest_server(int port);
+}
+
 using namespace payoff;
 
 namespace {
@@ -73,9 +78,10 @@ std::optional<std::string> extract_query_param(const std::string& url, const std
 void print_usage(const std::string& exe) {
     std::cout
         << "Usage:\n"
+        << "  " << exe << " --serve [--port <port>]             Start REST API server (default port: 8080)\n"
         << "  " << exe << " --test-connectivity\n"
         << "  " << exe << " --kite-login-url\n"
-    << "  " << exe << " --kite-fetch-access-token-url\n"
+        << "  " << exe << " --kite-fetch-access-token-url\n"
         << "  " << exe << " --kite-exchange-request-token <request_token>\n"
         << "  " << exe << " --kite-exchange-redirect-url <redirect_url_with_request_token>\n"
         << "  " << exe << " --clickhouse-ping\n";
@@ -318,6 +324,37 @@ int main(int argc, char* argv[]) {
             std::cout << "ClickHouse error: " << e.what() << std::endl;
             return 1;
         }
+    }
+
+    // Start REST API server if --serve flag is provided
+    if (has_flag(argc, argv, "--serve")) {
+        print_banner();
+        
+        // Get port from --port flag or default to 8080
+        int port = 8080;
+        auto port_arg = get_arg_value(argc, argv, "--port");
+        if (port_arg) {
+            try {
+                port = std::stoi(*port_arg);
+            } catch (...) {
+                std::cerr << "Invalid port number: " << *port_arg << std::endl;
+                return 1;
+            }
+        }
+        
+        std::cout << "Starting Payoff Engine REST API..." << std::endl;
+        std::cout << "Server will listen on http://0.0.0.0:" << port << std::endl;
+        std::cout << "\nAvailable endpoints:" << std::endl;
+        std::cout << "  GET  /api/health           - Health check" << std::endl;
+        std::cout << "  POST /api/payoff/calculate - Calculate payoff curve" << std::endl;
+        std::cout << "  POST /api/greeks/calculate - Calculate Greeks" << std::endl;
+        std::cout << "  POST /api/sensitivity      - Sensitivity surfaces" << std::endl;
+        std::cout << "  GET  /api/screener/*       - Market screener" << std::endl;
+        std::cout << "  GET  /api/replay/*         - Historical replay" << std::endl;
+        std::cout << "\nPress Ctrl+C to stop the server.\n" << std::endl;
+        
+        api::start_rest_server(port);
+        return 0;
     }
 
     const bool only_connectivity = has_flag(argc, argv, "--test-connectivity");

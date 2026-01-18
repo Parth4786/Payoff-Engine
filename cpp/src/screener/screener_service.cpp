@@ -67,6 +67,24 @@ struct ScreenerService::Impl {
         return std::string(buf);
     }
     
+    std::string timestamp_to_date_sql(Timestamp ts) {
+        // Convert milliseconds to SQL date string (for Date columns)
+        int64_t ms = ts.count();
+        time_t seconds = static_cast<time_t>(ms / 1000);
+        
+        struct tm* utc = gmtime(&seconds);
+        if (!utc) return "";
+        
+        // Add 5:30 for IST
+        utc->tm_hour += 5;
+        utc->tm_min += 30;
+        mktime(utc);
+        
+        char buf[16];
+        strftime(buf, sizeof(buf), "%Y-%m-%d", utc);
+        return std::string(buf);
+    }
+    
     double calculate_iv(double price, double spot, double strike, 
                         double dte_years, engine::OptionType type) {
         if (dte_years <= 0 || price <= 0) return 0.0;
@@ -676,7 +694,7 @@ std::vector<int64_t> ScreenerService::get_available_expiries(
     query << "SELECT DISTINCT expiry "
           << "FROM " << impl_->ch_config.database << "." << impl_->table << " "
           << "WHERE tradingsymbol LIKE '" << underlying << "%' "
-          << "AND expiry > '" << impl_->timestamp_to_sql(as_of) << "' "
+          << "AND expiry > '" << impl_->timestamp_to_date_sql(as_of) << "' "
           << "ORDER BY expiry "
           << "LIMIT 20 "
           << "FORMAT TabSeparated";
