@@ -354,13 +354,130 @@ std::vector<InstrumentData> KiteClient::get_instruments(const std::string& excha
     
     std::string response = make_request("GET", endpoint);
     
-    // This returns CSV data, not JSON
-    // Parse CSV and return instruments
-    
     std::vector<InstrumentData> instruments;
     
-    // CSV parsing would go here
+    if (response.empty() || last_error_ != KiteError::None) {
+        return instruments;
+    }
+    
+    // Kite returns CSV data (not JSON)
     // Format: instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange
+    
+    std::istringstream stream(response);
+    std::string line;
+    
+    // Skip header line
+    if (!std::getline(stream, line)) {
+        return instruments;
+    }
+    
+    // Parse header to find column indices (Kite may change column order)
+    std::vector<std::string> headers;
+    {
+        std::istringstream hdr_stream(line);
+        std::string col;
+        while (std::getline(hdr_stream, col, ',')) {
+            headers.push_back(col);
+        }
+    }
+    
+    auto find_col = [&headers](const std::string& name) -> int {
+        for (size_t i = 0; i < headers.size(); ++i) {
+            if (headers[i] == name) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    
+    int col_instrument_token = find_col("instrument_token");
+    int col_exchange_token = find_col("exchange_token");
+    int col_tradingsymbol = find_col("tradingsymbol");
+    int col_name = find_col("name");
+    int col_exchange = find_col("exchange");
+    int col_segment = find_col("segment");
+    int col_instrument_type = find_col("instrument_type");
+    int col_strike = find_col("strike");
+    int col_expiry = find_col("expiry");
+    int col_lot_size = find_col("lot_size");
+    int col_tick_size = find_col("tick_size");
+    
+    // Parse data rows
+    while (std::getline(stream, line)) {
+        if (line.empty()) continue;
+        
+        std::vector<std::string> cols;
+        std::istringstream row_stream(line);
+        std::string cell;
+        while (std::getline(row_stream, cell, ',')) {
+            cols.push_back(cell);
+        }
+        
+        if (cols.size() < 5) continue;  // Skip invalid rows
+        
+        try {
+            InstrumentData inst;
+            
+            if (col_instrument_token >= 0 && col_instrument_token < static_cast<int>(cols.size())) {
+                inst.instrument_token = static_cast<uint32_t>(std::stoul(cols[col_instrument_token]));
+            }
+            
+            if (col_exchange_token >= 0 && col_exchange_token < static_cast<int>(cols.size())) {
+                inst.exchange_token = static_cast<uint32_t>(std::stoul(cols[col_exchange_token]));
+            }
+            
+            if (col_tradingsymbol >= 0 && col_tradingsymbol < static_cast<int>(cols.size())) {
+                inst.tradingsymbol = cols[col_tradingsymbol];
+            }
+            
+            if (col_name >= 0 && col_name < static_cast<int>(cols.size())) {
+                inst.name = cols[col_name];
+            }
+            
+            if (col_exchange >= 0 && col_exchange < static_cast<int>(cols.size())) {
+                inst.exchange = cols[col_exchange];
+            }
+            
+            if (col_segment >= 0 && col_segment < static_cast<int>(cols.size())) {
+                inst.segment = cols[col_segment];
+            }
+            
+            if (col_instrument_type >= 0 && col_instrument_type < static_cast<int>(cols.size())) {
+                inst.instrument_type = cols[col_instrument_type];
+            }
+            
+            if (col_strike >= 0 && col_strike < static_cast<int>(cols.size()) && !cols[col_strike].empty()) {
+                try {
+                    double strike = std::stod(cols[col_strike]);
+                    if (strike > 0) inst.strike = strike;
+                } catch (...) {}
+            }
+            
+            if (col_expiry >= 0 && col_expiry < static_cast<int>(cols.size()) && !cols[col_expiry].empty()) {
+                inst.expiry = cols[col_expiry];
+            }
+            
+            if (col_lot_size >= 0 && col_lot_size < static_cast<int>(cols.size()) && !cols[col_lot_size].empty()) {
+                try {
+                    inst.lot_size = std::stoi(cols[col_lot_size]);
+                } catch (...) {
+                    inst.lot_size = 1;
+                }
+            }
+            
+            if (col_tick_size >= 0 && col_tick_size < static_cast<int>(cols.size()) && !cols[col_tick_size].empty()) {
+                try {
+                    inst.tick_size = std::stod(cols[col_tick_size]);
+                } catch (...) {
+                    inst.tick_size = 0.05;
+                }
+            }
+            
+            instruments.push_back(std::move(inst));
+            
+        } catch (const std::exception&) {
+            // Skip invalid rows
+            continue;
+        }
+    }
     
     return instruments;
 }

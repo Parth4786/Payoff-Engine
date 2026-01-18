@@ -182,11 +182,27 @@ public:
                                 const std::string& table = "instruments");
     
     /**
-     * @brief Load instruments with fallback: directory first, then ClickHouse
+     * @brief Load instruments from Kite API live
+     * 
+     * Fetches instrument master for all configured exchanges from Kite API.
+     * Requires authenticated KiteClient.
+     * 
+     * Python equivalent:
+     *   for exchange in ['NSE', 'NFO', 'BSE', 'BFO', 'MCX']:
+     *       instruments.append(kite.instruments(exchange))
+     * 
+     * @param exchanges List of exchanges to fetch (default: NSE, NFO, BSE, BFO, MCX)
+     * @return Number of instruments loaded
+     */
+    size_t load_from_kite(const std::vector<std::string>& exchanges = 
+                          {"NSE", "NFO", "BSE", "BFO", "MCX"});
+    
+    /**
+     * @brief Load instruments with fallback: Kite API first, then ClickHouse
      * 
      * Strategy:
-     * 1. Try load_directory() from KITE_INSTRUMENT_MASTER_DIR config
-     * 2. If no instruments loaded, try load_from_clickhouse()
+     * 1. If Kite is authenticated, try load_from_kite() for all exchanges
+     * 2. If no instruments loaded (or not authenticated), try load_from_clickhouse()
      * 
      * @return Total number of instruments loaded
      */

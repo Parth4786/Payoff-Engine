@@ -6,6 +6,7 @@
 #include "core/instrument_manager.hpp"
 #include "core/clickhouse_http.hpp"
 #include "core/config.hpp"
+#include "kite/kite_client.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -365,6 +366,100 @@ size_t InstrumentManager::load_from_clickhouse(const std::string& database,
     return loaded;
 }
 
+// ============================================================================
+// Kite API Loading
+// ============================================================================
+
+size_t InstrumentManager::load_from_kite(const std::vector<std::string>& exchanges) {
+    auto kite_client = kite::create_kite_client();
+    
+    if (!kite_client || !kite_client->is_authenticated()) {
+        std::cerr << "[InstrumentManager] Kite client not authenticated, skipping API fetch" << std::endl;
+        return 0;
+    }
+    
+    size_t loaded = 0;
+    
+    // Fetch instruments for each exchange (like Python: kite.instruments(exchange))
+    for (const auto& exchange : exchanges) {
+        try {
+            std::cout << "[InstrumentManager] Fetching " << exchange << " instruments from Kite API..." << std::endl;
+            
+            auto kite_instruments = kite_client->get_instruments(exchange);
+            
+            if (kite_instruments.empty()) {
+                std::cerr << "[InstrumentManager] No instruments returned for " << exchange << std::endl;
+                continue;
+            }
+            
+            // Convert kite::InstrumentData to core::InstrumentInfo
+            for (const auto& ki : kite_instruments) {
+                InstrumentInfo info;
+                
+                info.instrument_token = ki.instrument_token;
+                info.exchange_token = ki.exchange_token;
+                info.tradingsymbol = ki.tradingsymbol;
+                info.name = ki.name;
+                info.exchange = exchange_from_string(ki.exchange);
+                info.segment = ki.segment;
+                info.lot_size = ki.lot_size;
+                info.tick_size = ki.tick_size;
+                
+                // Parse instrument type from segment/tradingsymbol
+                info.instrument_type = parse_instrument_type(ki.segment, ki.tradingsymbol);
+                
+                // Strike
+                if (ki.strike && *ki.strike > 0) {
+                    info.strike = *ki.strike;
+                }
+                
+                // Expiry (parse YYYY-MM-DD)
+                if (ki.expiry && !ki.expiry->empty()) {
+                    try {
+                        int year, month, day;
+                        if (std::sscanf(ki.expiry->c_str(), "%d-%d-%d", &year, &month, &day) == 3) {
+                            info.expiry = std::chrono::year_month_day{
+                                std::chrono::year{year},
+                                std::chrono::month{static_cast<unsigned>(month)},
+                                std::chrono::day{static_cast<unsigned>(day)}
+                            };
+                        }
+                    } catch (...) {}
+                }
+                
+                // Extract underlying from tradingsymbol
+                if (!info.tradingsymbol.empty()) {
+                    size_t i = 0;
+                    while (i < info.tradingsymbol.size() && 
+                           !std::isdigit(static_cast<unsigned char>(info.tradingsymbol[i]))) {
+                        ++i;
+                    }
+                    if (i > 0) {
+                        info.underlying = info.tradingsymbol.substr(0, i);
+                    }
+                }
+                
+                instruments_.push_back(std::move(info));
+                ++loaded;
+            }
+            
+            std::cout << "[InstrumentManager] Loaded " << kite_instruments.size() 
+                      << " instruments from " << exchange << std::endl;
+            
+        } catch (const std::exception& e) {
+            std::cerr << "[InstrumentManager] Failed to fetch " << exchange 
+                      << " instruments: " << e.what() << std::endl;
+        }
+    }
+    
+    // Rebuild indices after loading all exchanges
+    if (loaded > 0) {
+        build_indices();
+    }
+    
+    return loaded;
+}
+
 size_t InstrumentManager::load_with_fallback() {
     auto& cfg = config::config();
     if (!cfg.is_loaded()) {
@@ -373,25 +468,21 @@ size_t InstrumentManager::load_with_fallback() {
     
     size_t total = 0;
     
-    // Strategy 1: Try loading from directory
-    std::string instrument_dir = cfg.kite_instrument_dir();
-    if (!instrument_dir.empty()) {
-        try {
-            namespace fs = std::filesystem;
-            if (fs::exists(instrument_dir) && fs::is_directory(instrument_dir)) {
-                total = load_directory(instrument_dir);
-                if (total > 0) {
-                    std::cout << "[InstrumentManager] Loaded " << total 
-                              << " instruments from directory: " << instrument_dir << std::endl;
-                    return total;
-                }
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "[InstrumentManager] Directory load failed: " << e.what() << std::endl;
+    // Strategy 1: Try Kite API live (if authenticated)
+    // This mirrors Python: for ex in ['NSE','NFO','BSE','BFO','MCX']: kite.instruments(ex)
+    std::cout << "[InstrumentManager] Attempting to load instruments from Kite API..." << std::endl;
+    try {
+        total = load_from_kite({"NSE", "NFO", "BSE", "BFO", "MCX"});
+        if (total > 0) {
+            std::cout << "[InstrumentManager] Loaded " << total 
+                      << " instruments from Kite API" << std::endl;
+            return total;
         }
+    } catch (const std::exception& e) {
+        std::cerr << "[InstrumentManager] Kite API load failed: " << e.what() << std::endl;
     }
     
-    // Strategy 2: Fallback to ClickHouse
+    // Strategy 2: Fallback to ClickHouse instrument dump
     std::cout << "[InstrumentManager] Falling back to ClickHouse instrument dump..." << std::endl;
     try {
         total = load_from_clickhouse();
