@@ -35,13 +35,30 @@ public:
      * @return true if loaded successfully
      */
     bool load(const std::string& filepath = ".env") {
-        std::ifstream file(filepath);
-        if (!file.is_open()) {
-            // Try parent directory
-            file.open("../.env");
-            if (!file.is_open()) {
-                return false;
+        std::ifstream file;
+
+        // Try a small set of common locations relative to current working directory.
+        // This is important because the server/binary is often run from `cpp/build`.
+        const std::string candidates[] = {
+            filepath,
+            ".env",
+            "../.env",
+            "../../.env",
+            "../../../.env",
+            "../../../../.env",
+        };
+
+        for (const auto& p : candidates) {
+            file.open(p);
+            if (file.is_open()) {
+                loaded_path_ = p;
+                break;
             }
+            file.clear();
+        }
+
+        if (!file.is_open()) {
+            return false;
         }
         
         std::string line;
@@ -124,6 +141,8 @@ public:
     }
     
     [[nodiscard]] bool is_loaded() const noexcept { return loaded_; }
+
+    [[nodiscard]] std::string loaded_path() const { return loaded_path_; }
     
     // ========================================================================
     // ClickHouse Configuration
@@ -220,6 +239,7 @@ private:
     
     std::unordered_map<std::string, std::string> values_;
     bool loaded_ = false;
+    std::string loaded_path_;
 };
 
 // Global config accessor

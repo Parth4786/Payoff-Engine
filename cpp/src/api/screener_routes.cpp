@@ -270,53 +270,73 @@ public:
             filter.offset = static_cast<size_t>(std::stoi(req.get_param("offset", "0")));
             filter.limit = static_cast<size_t>(std::stoi(req.get_param("limit", "100")));
             
-            // Execute query
-            auto result = get_screener().get_market_at_timestamp(timestamp, filter);
-            
-            // Build response
-            ScreenerJsonBuilder json;
-            json.start_object()
-                .key("timestamp").value(result.timestamp.count())
-                .key("total_instruments").value(result.total_instruments)
-                .key("options_count").value(result.options_count)
-                .key("futures_count").value(result.futures_count)
-                .key("equities_count").value(result.equities_count)
-                .key("query_time_ms").value(result.query_time_ms)
-                .key("calc_time_ms").value(result.calc_time_ms);
-            
-            // Underlyings
-            json.key("underlyings").start_array();
-            for (size_t i = 0; i < result.underlyings.size(); ++i) {
-                if (i > 0) json.next();
-                const auto& u = result.underlyings[i];
+            try {
+                // Execute query
+                auto result = get_screener().get_market_at_timestamp(timestamp, filter);
+                
+                // Build response
+                ScreenerJsonBuilder json;
                 json.start_object()
-                    .key("symbol").value(u.symbol)
-                    .key("spot_price").value(u.spot_price)
-                    .key("prev_close").value(u.prev_close)
-                    .key("change").value(u.change)
-                    .key("change_pct").value(u.change_pct)
-                    .key("volume").value(u.volume)
-                    .key("atm_iv").value(u.atm_iv)
-                    .key("total_calls").value(u.total_calls)
-                    .key("total_puts").value(u.total_puts)
-                    .key("total_call_oi").value(u.total_call_oi)
-                    .key("total_put_oi").value(u.total_put_oi)
-                    .key("pcr_oi").value(u.pcr_oi)
-                    .key("pcr_volume").value(u.pcr_volume)
+                    .key("timestamp").value(result.timestamp.count())
+                    .key("total_instruments").value(result.total_instruments)
+                    .key("options_count").value(result.options_count)
+                    .key("futures_count").value(result.futures_count)
+                    .key("equities_count").value(result.equities_count)
+                    .key("query_time_ms").value(result.query_time_ms)
+                    .key("calc_time_ms").value(result.calc_time_ms)
+                    .key("source").value("clickhouse");
+                
+                // Underlyings
+                json.key("underlyings").start_array();
+                for (size_t i = 0; i < result.underlyings.size(); ++i) {
+                    if (i > 0) json.next();
+                    const auto& u = result.underlyings[i];
+                    json.start_object()
+                        .key("symbol").value(u.symbol)
+                        .key("spot_price").value(u.spot_price)
+                        .key("prev_close").value(u.prev_close)
+                        .key("change").value(u.change)
+                        .key("change_pct").value(u.change_pct)
+                        .key("volume").value(u.volume)
+                        .key("atm_iv").value(u.atm_iv)
+                        .key("total_calls").value(u.total_calls)
+                        .key("total_puts").value(u.total_puts)
+                        .key("total_call_oi").value(u.total_call_oi)
+                        .key("total_put_oi").value(u.total_put_oi)
+                        .key("pcr_oi").value(u.pcr_oi)
+                        .key("pcr_volume").value(u.pcr_volume)
+                        .end_object();
+                }
+                json.end_array();
+                
+                // Instruments
+                json.key("instruments").start_array();
+                for (size_t i = 0; i < result.instruments.size(); ++i) {
+                    if (i > 0) json.next();
+                    serialize_instrument(json, result.instruments[i]);
+                }
+                json.end_array();
+                
+                json.end_object();
+                res.set_json(json.str());
+            } catch (const std::exception& e) {
+                // Degrade gracefully: structured empty payload.
+                ScreenerJsonBuilder json;
+                json.start_object()
+                    .key("timestamp").value(timestamp.count())
+                    .key("total_instruments").value(0)
+                    .key("options_count").value(0)
+                    .key("futures_count").value(0)
+                    .key("equities_count").value(0)
+                    .key("query_time_ms").value(0.0)
+                    .key("calc_time_ms").value(0.0)
+                    .key("source").value("none")
+                    .key("warning").value(std::string("Market data unavailable: ") + e.what())
+                    .key("underlyings").start_array().end_array()
+                    .key("instruments").start_array().end_array()
                     .end_object();
+                res.set_json(json.str());
             }
-            json.end_array();
-            
-            // Instruments
-            json.key("instruments").start_array();
-            for (size_t i = 0; i < result.instruments.size(); ++i) {
-                if (i > 0) json.next();
-                serialize_instrument(json, result.instruments[i]);
-            }
-            json.end_array();
-            
-            json.end_object();
-            res.set_json(json.str());
         });
         
         // ====================================================================
@@ -336,20 +356,32 @@ public:
             core::Timestamp start(parse_timestamp(start_str));
             core::Timestamp end(parse_timestamp(end_str));
             
-            auto timestamps = get_screener().get_available_timestamps(start, end, interval);
-            
-            ScreenerJsonBuilder json;
-            json.start_object()
-                .key("count").value(timestamps.size())
-                .key("timestamps").start_array();
-            
-            for (size_t i = 0; i < timestamps.size(); ++i) {
-                if (i > 0) json.next();
-                json.value(timestamps[i].count());
+            try {
+                auto timestamps = get_screener().get_available_timestamps(start, end, interval);
+                
+                ScreenerJsonBuilder json;
+                json.start_object()
+                    .key("count").value(timestamps.size())
+                    .key("source").value("clickhouse")
+                    .key("timestamps").start_array();
+                
+                for (size_t i = 0; i < timestamps.size(); ++i) {
+                    if (i > 0) json.next();
+                    json.value(timestamps[i].count());
+                }
+                
+                json.end_array().end_object();
+                res.set_json(json.str());
+            } catch (const std::exception& e) {
+                ScreenerJsonBuilder json;
+                json.start_object()
+                    .key("count").value(0)
+                    .key("source").value("none")
+                    .key("warning").value(std::string("Timestamps unavailable: ") + e.what())
+                    .key("timestamps").start_array().end_array()
+                    .end_object();
+                res.set_json(json.str());
             }
-            
-            json.end_array().end_object();
-            res.set_json(json.str());
         });
         
         // ====================================================================
@@ -472,28 +504,42 @@ public:
             
             core::Timestamp timestamp(parse_timestamp(timestamp_str));
             
-            auto result = get_screener().get_iv_surface(underlying, timestamp);
-            
-            ScreenerJsonBuilder json;
-            json.start_object()
-                .key("underlying").value(result.underlying)
-                .key("spot_price").value(result.spot_price)
-                .key("timestamp").value(result.timestamp.count())
-                .key("surface").start_array();
-            
-            for (size_t i = 0; i < result.surface.size(); ++i) {
-                if (i > 0) json.next();
-                const auto& pt = result.surface[i];
+            try {
+                auto result = get_screener().get_iv_surface(underlying, timestamp);
+                
+                ScreenerJsonBuilder json;
                 json.start_object()
-                    .key("strike").value(pt.strike)
-                    .key("dte").value(pt.dte)
-                    .key("iv").value(pt.iv)
-                    .key("iv_pct").value(pt.iv * 100.0)
+                    .key("underlying").value(result.underlying)
+                    .key("spot_price").value(result.spot_price)
+                    .key("timestamp").value(result.timestamp.count())
+                    .key("source").value("clickhouse")
+                    .key("surface").start_array();
+                
+                for (size_t i = 0; i < result.surface.size(); ++i) {
+                    if (i > 0) json.next();
+                    const auto& pt = result.surface[i];
+                    json.start_object()
+                        .key("strike").value(pt.strike)
+                        .key("dte").value(pt.dte)
+                        .key("iv").value(pt.iv)
+                        .key("iv_pct").value(pt.iv * 100.0)
+                        .end_object();
+                }
+                
+                json.end_array().end_object();
+                res.set_json(json.str());
+            } catch (const std::exception& e) {
+                ScreenerJsonBuilder json;
+                json.start_object()
+                    .key("underlying").value(underlying)
+                    .key("spot_price").value(0.0)
+                    .key("timestamp").value(timestamp.count())
+                    .key("source").value("none")
+                    .key("warning").value(std::string("IV surface unavailable: ") + e.what())
+                    .key("surface").start_array().end_array()
                     .end_object();
+                res.set_json(json.str());
             }
-            
-            json.end_array().end_object();
-            res.set_json(json.str());
         });
         
         // ====================================================================
