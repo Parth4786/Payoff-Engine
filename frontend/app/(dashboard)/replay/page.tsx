@@ -27,6 +27,7 @@ export default function ReplayPage() {
     status,
     speed,
     error,
+    setError: storeSetError,
     initReplay: storeInitReplay,
     play,
     pause,
@@ -68,12 +69,19 @@ export default function ReplayPage() {
   const [intervalMs, setIntervalMs] = useState<number>(5 * 60 * 1000);
 
   const handleInitReplay = async () => {
+    storeSetError(null);
     if (strategy.legs.length === 0) return;
 
     const start = new Date(startValue).getTime();
     const end = new Date(endValue).getTime();
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start <= 0 || end <= 0) return;
-    if (start >= end) return;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start <= 0 || end <= 0) {
+      storeSetError('Start and end timestamps are required');
+      return;
+    }
+    if (start >= end) {
+      storeSetError('Start timestamp must be before end timestamp');
+      return;
+    }
 
     await storeInitReplay(strategy, start, end, intervalMs);
   };

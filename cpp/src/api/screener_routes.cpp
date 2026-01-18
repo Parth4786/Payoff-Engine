@@ -17,6 +17,7 @@
 
 #include "api/http_server.hpp"
 #include "screener/screener_service.hpp"
+#include "core/instrument_manager.hpp"
 
 #include <iostream>
 #include <memory>
@@ -393,6 +394,17 @@ public:
         // ====================================================================
         server.Get("/api/screener/underlyings", [](const http::Request&, http::Response& res) {
             auto underlyings = get_screener().get_available_underlyings();
+
+            // Best-effort: enrich with lot_size/tick_size from InstrumentManager.
+            // This keeps backend authoritative for contract specs.
+            auto& inst_mgr = core::get_instrument_manager();
+            if (inst_mgr.empty()) {
+                try {
+                    inst_mgr.load_with_fallback();
+                } catch (...) {
+                    // leave empty; we'll respond with lot_size=0
+                }
+            }
             
             ScreenerJsonBuilder json;
             json.start_object()
@@ -400,7 +412,30 @@ public:
             
             for (size_t i = 0; i < underlyings.size(); ++i) {
                 if (i > 0) json.next();
-                json.value(underlyings[i]);
+                const auto& sym = underlyings[i];
+
+                int lot_size = 0;
+                double tick_size = 0.0;
+                if (!inst_mgr.empty()) {
+                    auto chain = inst_mgr.get_option_chain(sym);
+                    if (!chain.empty() && chain[0]) {
+                        lot_size = chain[0]->lot_size;
+                        tick_size = chain[0]->tick_size;
+                    } else {
+                        auto futs = inst_mgr.get_futures(sym);
+                        if (!futs.empty() && futs[0]) {
+                            lot_size = futs[0]->lot_size;
+                            tick_size = futs[0]->tick_size;
+                        }
+                    }
+                }
+
+                json.start_object()
+                    .key("symbol").value(sym)
+                    .key("name").value(sym)
+                    .key("lot_size").value(lot_size)
+                    .key("tick_size").value(tick_size)
+                .end_object();
             }
             
             json.end_array().end_object();

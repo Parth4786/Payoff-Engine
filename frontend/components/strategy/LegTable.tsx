@@ -1,14 +1,34 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Copy, GripVertical, Edit2 } from 'lucide-react';
-import { useStrategy } from '@/hooks';
+import { useStrategy, useUnderlyings } from '@/hooks';
 import { cn, formatCurrency } from '@/lib/utils';
 import type { OptionLeg, OptionType, Side } from '@/lib/types';
 
 export function LegTable() {
   const { strategy, addLeg, updateLeg, removeLeg, duplicateLeg } = useStrategy();
+  const { data: underlyings = [] } = useUnderlyings();
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [quantityMode, setQuantityMode] = useState<'LOTS' | 'CONTRACTS'>('LOTS');
+
+  const underlyingLotSize = useMemo(() => {
+    const match = underlyings.find((u) => u.symbol === strategy.underlying);
+    if (match?.lot_size && match.lot_size > 0) return match.lot_size;
+    return 25;
+  }, [strategy.underlying, underlyings]);
+
+  useEffect(() => {
+    if (!underlyingLotSize || underlyingLotSize <= 0) return;
+    if (strategy.legs.length === 0) return;
+    const needsUpdate = strategy.legs.some((l) => l.lot !== underlyingLotSize);
+    if (!needsUpdate) return;
+    strategy.legs.forEach((l) => {
+      if (l.id && l.lot !== underlyingLotSize) {
+        updateLeg(l.id, { lot: underlyingLotSize });
+      }
+    });
+  }, [strategy.legs, underlyingLotSize, updateLeg]);
 
   const handleAddLeg = () => {
     const defaultLeg: Omit<OptionLeg, 'id'> = {
@@ -16,7 +36,7 @@ export function LegTable() {
       side: 'BUY',
       strike: 26300,
       qty: 1,
-      lot: 25,
+      lot: underlyingLotSize,
       premium: 0,
     };
     addLeg(defaultLeg);
@@ -39,12 +59,42 @@ export function LegTable() {
 
   return (
     <div className="space-y-3">
+      <div className="flex items-center justify-end gap-2">
+        <span className="text-xs text-foreground-muted">Qty input:</span>
+        <div className="flex items-center bg-background-tertiary rounded-lg p-1">
+          <button
+            onClick={() => setQuantityMode('LOTS')}
+            className={cn(
+              'px-3 py-1 text-xs font-medium rounded-md transition-all',
+              quantityMode === 'LOTS'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-foreground-muted hover:text-foreground'
+            )}
+          >
+            Lots
+          </button>
+          <button
+            onClick={() => setQuantityMode('CONTRACTS')}
+            className={cn(
+              'px-3 py-1 text-xs font-medium rounded-md transition-all',
+              quantityMode === 'CONTRACTS'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-foreground-muted hover:text-foreground'
+            )}
+          >
+            Qty
+          </button>
+        </div>
+        <span className="text-xs text-foreground-muted">Lot size: {underlyingLotSize}</span>
+      </div>
+
       {strategy.legs.map((leg, index) => (
         <LegRow
           key={leg.id}
           leg={leg}
           index={index}
           isEditing={editingId === leg.id}
+          quantityMode={quantityMode}
           onEdit={() => setEditingId(editingId === leg.id ? null : leg.id!)}
           onUpdate={(updates) => updateLeg(leg.id!, updates)}
           onRemove={() => removeLeg(leg.id!)}
@@ -67,15 +117,17 @@ interface LegRowProps {
   leg: OptionLeg;
   index: number;
   isEditing: boolean;
+  quantityMode: 'LOTS' | 'CONTRACTS';
   onEdit: () => void;
   onUpdate: (updates: Partial<OptionLeg>) => void;
   onRemove: () => void;
   onDuplicate: () => void;
 }
 
-function LegRow({ leg, index, isEditing, onEdit, onUpdate, onRemove, onDuplicate }: LegRowProps) {
+function LegRow({ leg, index, isEditing, quantityMode, onEdit, onUpdate, onRemove, onDuplicate }: LegRowProps) {
   const isBuy = leg.side === 'BUY';
   const totalPremium = leg.premium * leg.qty * leg.lot;
+  const contracts = leg.qty * leg.lot;
   
   return (
     <div
@@ -139,13 +191,36 @@ function LegRow({ leg, index, isEditing, onEdit, onUpdate, onRemove, onDuplicate
           {/* Qty */}
           <div className="flex items-center gap-1">
             <span className="text-xs text-foreground-muted">×</span>
-            <input
-              type="number"
-              value={leg.qty}
-              onChange={(e) => onUpdate({ qty: Number(e.target.value) })}
-              className="w-12 px-2 py-1 text-sm font-mono bg-background-tertiary border border-border rounded focus:outline-none focus:border-accent"
-              min={1}
-            />
+            {quantityMode === 'LOTS' ? (
+              <>
+                <input
+                  type="number"
+                  value={leg.qty}
+                  onChange={(e) => onUpdate({ qty: Number(e.target.value) })}
+                  className="w-14 px-2 py-1 text-sm font-mono bg-background-tertiary border border-border rounded focus:outline-none focus:border-accent"
+                  min={1}
+                />
+                <span className="text-xs text-foreground-muted">lots</span>
+              </>
+            ) : (
+              <>
+                <input
+                  type="number"
+                  value={contracts}
+                  onChange={(e) => {
+                    const nextContracts = Number(e.target.value);
+                    if (!Number.isFinite(nextContracts) || nextContracts <= 0) return;
+                    const lotSize = leg.lot || 1;
+                    const nextLots = Math.max(1, Math.round(nextContracts / lotSize));
+                    onUpdate({ qty: nextLots });
+                  }}
+                  className="w-20 px-2 py-1 text-sm font-mono bg-background-tertiary border border-border rounded focus:outline-none focus:border-accent"
+                  min={leg.lot || 1}
+                  step={leg.lot || 1}
+                />
+                <span className="text-xs text-foreground-muted">qty</span>
+              </>
+            )}
           </div>
 
           {/* Premium */}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useLatestTimestamp, useOptionChain, useStrategy, useScreener } from '@/hooks';
+import { useLatestTimestamp, useOptionChain, useStrategy, useScreener, useUnderlyings } from '@/hooks';
 import { cn, formatCurrency, formatNumber } from '@/lib/utils';
 import { Plus, RefreshCw } from 'lucide-react';
 import type { OptionChainStrike, OptionType, Side } from '@/lib/types';
@@ -12,6 +12,7 @@ interface Props {
 
 export function OptionChainPicker({ spotPrice }: Props) {
   const { strategy, addLeg } = useStrategy();
+  const { data: underlyings = [] } = useUnderlyings();
   const { expiries } = useScreener();
   const { data: latestTimestamp } = useLatestTimestamp(7, 60);
   const [selectedExpiry, setSelectedExpiry] = useState<number | undefined>();
@@ -23,13 +24,19 @@ export function OptionChainPicker({ spotPrice }: Props) {
     latestTimestamp
   );
 
+  const lotSize = useMemo(() => {
+    const match = underlyings.find((u) => u.symbol === strategy.underlying);
+    if (match?.lot_size && match.lot_size > 0) return match.lot_size;
+    return 25;
+  }, [strategy.underlying, underlyings]);
+
   const handleAddLeg = (strike: number, type: OptionType, side: Side, premium: number) => {
     addLeg({
       type,
       side,
       strike,
       qty: 1,
-      lot: 25, // NIFTY default
+      lot: lotSize,
       premium,
     });
   };

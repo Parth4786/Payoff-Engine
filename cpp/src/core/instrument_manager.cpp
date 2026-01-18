@@ -488,6 +488,17 @@ size_t InstrumentManager::load_with_fallback() {
     std::cout << "[InstrumentManager] Falling back to ClickHouse instrument dump..." << std::endl;
     try {
         total = load_from_clickhouse();
+
+        // Some deployments store instrument masters in exchange-specific tables.
+        // Common pattern: Instrument_Dump.instruments_{nse,nfo,bse,bfo,mcx}.
+        if (total == 0) {
+            const std::string dump_db = "Instrument_Dump";
+            total += load_from_clickhouse(dump_db, "instruments_nfo");
+            total += load_from_clickhouse(dump_db, "instruments_nse");
+            total += load_from_clickhouse(dump_db, "instruments_bse");
+            total += load_from_clickhouse(dump_db, "instruments_bfo");
+            total += load_from_clickhouse(dump_db, "instruments_mcx");
+        }
         if (total > 0) {
             std::cout << "[InstrumentManager] Loaded " << total 
                       << " instruments from ClickHouse" << std::endl;

@@ -21,6 +21,8 @@
 #include "payoff/pricing.hpp"
 #include "payoff/models.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -101,6 +103,7 @@ public:
     }
     
     JsonBuilder& next() {
+        ss_ << ",";
         first_ = false;
         return *this;
     }
@@ -218,44 +221,101 @@ public:
         
         // Calculate payoff
         server.Post("/api/payoff/calculate", [](const http::Request& req, http::Response& res) {
-            // Parse strategy from body
-            // Expected: {underlying: "NIFTY", spot: 26300, legs: [...]}
-            
-            double spot = json_get_double(req.body, "spot");
-            if (spot <= 0) spot = 26300.0;  // Default NIFTY
-            
-            std::string underlying = json_get_string(req.body, "underlying");
+            // Expected: { underlying: "NIFTY", spot: 26300, legs: [...] }
+
+            using nlohmann::json;
+
+            json body;
+            try {
+                body = json::parse(req.body);
+            } catch (...) {
+                res.status = 400;
+                res.set_json("{\"error\":\"invalid JSON body\"}");
+                return;
+            }
+
+            auto underlying = body.value("underlying", std::string("NIFTY"));
             if (underlying.empty()) underlying = "NIFTY";
-            
-            // Create demo strategy (Bull Call Spread)
+
+            double spot = body.value("spot", 0.0);
+            if (spot <= 0) spot = 26300.0;
+
+            auto resolve_lot_size = [&](const std::string& u) -> int {
+                try {
+                    auto& mgr = core::get_instrument_manager();
+                    if (mgr.empty()) {
+                        mgr.load_with_fallback();
+                    }
+
+                    auto chain = mgr.get_option_chain(u);
+                    if (!chain.empty() && chain[0]) {
+                        return std::max(1, chain[0]->lot_size);
+                    }
+
+                    auto futs = mgr.get_futures(u);
+                    if (!futs.empty() && futs[0]) {
+                        return std::max(1, futs[0]->lot_size);
+                    }
+                } catch (...) {
+                    // fall through
+                }
+                return 25;
+            };
+
+            const int default_lot_size = resolve_lot_size(underlying);
+
             engine::Strategy strategy;
-            strategy.name = "Bull Call Spread";
+            strategy.name = body.value("name", std::string("Custom Strategy"));
             strategy.underlying = underlying;
             strategy.underlying_price = spot;
-            
-            // Buy ATM Call
-            engine::OptionLeg long_call;
-            long_call.type = engine::OptionType::Call;
-            long_call.side = engine::Side::Buy;
-            long_call.strike = spot;
-            long_call.quantity = 1;
-            long_call.lot_size = 25;
-            long_call.premium = 250.0;
-            strategy.legs.push_back(long_call);
-            
-            // Sell OTM Call
-            engine::OptionLeg short_call;
-            short_call.type = engine::OptionType::Call;
-            short_call.side = engine::Side::Sell;
-            short_call.strike = spot + 200;
-            short_call.quantity = 1;
-            short_call.lot_size = 25;
-            short_call.premium = 150.0;
-            strategy.legs.push_back(short_call);
+
+            // Parse legs
+            if (!body.contains("legs") || !body["legs"].is_array() || body["legs"].empty()) {
+                res.status = 400;
+                res.set_json("{\"error\":\"legs required\"}");
+                return;
+            }
+
+            for (const auto& leg_json : body["legs"]) {
+                if (!leg_json.is_object()) continue;
+
+                const auto type_str = leg_json.value("type", std::string("CE"));
+                const auto side_str = leg_json.value("side", std::string("BUY"));
+
+                engine::OptionLeg leg;
+                leg.type = (type_str == "PE" || type_str == "PUT") ? engine::OptionType::Put : engine::OptionType::Call;
+                leg.side = (side_str == "SELL" || side_str == "sell") ? engine::Side::Sell : engine::Side::Buy;
+
+                leg.strike = leg_json.value("strike", 0.0);
+                leg.quantity = leg_json.value("qty", 0);
+                if (leg.quantity == 0) leg.quantity = leg_json.value("quantity", 0);
+                if (leg.quantity <= 0) leg.quantity = 1;
+
+                leg.lot_size = leg_json.value("lot", 0);
+                if (leg.lot_size == 0) leg.lot_size = leg_json.value("lot_size", 0);
+                if (leg.lot_size <= 0) leg.lot_size = default_lot_size;
+
+                leg.premium = leg_json.value("premium", 0.0);
+
+                if (leg.strike > 0) {
+                    strategy.legs.push_back(leg);
+                }
+            }
+
+            if (strategy.legs.empty()) {
+                res.status = 400;
+                res.set_json("{\"error\":\"no valid legs\"}");
+                return;
+            }
+
+            // Optional greek assumptions
+            const double iv = body.value("iv", 0.20);
+            const int dte = body.value("dte", 30);
             
             // Calculate
             engine::PayoffCalculator calculator;
             auto curve = calculator.calculate_expiry_payoff(strategy);
+            auto greeks = calculator.calculate_strategy_greeks(strategy, iv, dte);
             
             // Build response
             JsonBuilder json;
@@ -283,8 +343,16 @@ public:
                     .key("pnl").value(curve.points[i].pnl)
                     .end_object();
             }
-            json.end_array().end_object();
-            
+            json.end_array()
+                .key("greeks").start_object()
+                    .key("delta").value(greeks.delta)
+                    .key("gamma").value(greeks.gamma)
+                    .key("theta").value(greeks.theta)
+                    .key("vega").value(greeks.vega)
+                    .key("rho").value(greeks.rho)
+                .end_object()
+                .end_object();
+
             res.set_json(json.str());
         });
         
