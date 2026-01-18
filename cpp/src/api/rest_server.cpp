@@ -17,6 +17,7 @@
 #include "core/config.hpp"
 #include "core/models.hpp"
 #include "core/instrument_manager.hpp"
+#include "core/clickhouse_http.hpp"
 #include "cache/market_cache.hpp"
 #include "payoff/calculator.hpp"
 #include "payoff/pricing.hpp"
@@ -876,6 +877,58 @@ void start_rest_server(int port) {
     http::Server server;
     server.enable_cors();
     
+    // ========================================================================
+    // Configuration Loading
+    // ========================================================================
+    auto& cfg = config::config();
+    if (!cfg.is_loaded()) {
+        cfg.load();
+    }
+    
+    if (cfg.is_loaded()) {
+        std::cout << "\n[Config] ✓ Loaded from: " << cfg.loaded_path() << "\n";
+    } else {
+        std::cout << "\n[Config] ⚠ No .env file found, using defaults/environment\n";
+    }
+    
+    // ========================================================================
+    // Datasource Initialization
+    // ========================================================================
+    std::cout << "\n[Datasource] Initializing datasources...\n";
+    
+    // 1. Test ClickHouse connectivity
+    {
+        auto ch_config = core::ClickHouseHttpConfig::from_config();
+        std::cout << "[Datasource] ClickHouse: " << ch_config.host << ":" << ch_config.port 
+                  << "/" << ch_config.database << "\n";
+        
+        if (core::clickhouse_ping(ch_config)) {
+            std::cout << "[Datasource] ✓ ClickHouse connection OK\n";
+            
+            // Test query to verify tick data access
+            try {
+                auto result = core::clickhouse_execute_query(ch_config, 
+                    "SELECT count() FROM tick_data LIMIT 1");
+                std::cout << "[Datasource] ✓ ClickHouse tick_data accessible\n";
+            } catch (const std::exception& e) {
+                std::cout << "[Datasource] ⚠ ClickHouse tick_data: " << e.what() << "\n";
+            }
+        } else {
+            std::cout << "[Datasource] ✗ ClickHouse connection FAILED\n";
+        }
+    }
+    
+    // 2. Load instruments (from Kite API with ClickHouse ID mapping)
+    auto& mgr = core::get_instrument_manager();
+    if (mgr.empty()) {
+        std::cout << "\n[Datasource] Loading instruments...\n";
+        mgr.load_with_fallback();
+    }
+    std::cout << "[Datasource] ✓ InstrumentManager: " << mgr.size() << " instruments loaded\n";
+    
+    // ========================================================================
+    // REST API Setup
+    // ========================================================================
     RestApi api;
     api.setup_routes(server);
     
@@ -885,27 +938,21 @@ void start_rest_server(int port) {
     // Add replay routes
     setup_replay_routes(server);
     
-    // Initialize and add live routes
+    // Initialize and add live routes (includes Kite WS setup)
     {
-        // Get the global instrument manager
-        auto& mgr = core::get_instrument_manager();
-        if (mgr.empty()) {
-            std::cout << "Loading instruments from ClickHouse/Kite..." << std::endl;
-            mgr.load_with_fallback();
-        }
-        
         // Create shared_ptr that points to the global instance (don't own it)
-        // Note: This works because the global instance outlives the server
         auto* mgr_ptr = &mgr;
         auto instrument_manager = std::shared_ptr<core::InstrumentManager>(
             mgr_ptr, [](core::InstrumentManager*) { /* no-op deleter */ });
         
         auto market_cache = std::make_shared<cache::MarketCache>();
+        
+        std::cout << "\n[Datasource] Initializing Kite WebSocket...\n";
         init_live_data_service(instrument_manager, market_cache);
         setup_live_routes(server);
     }
     
-    std::cout << "Starting REST API server on port " << port << std::endl;
+    std::cout << "\nStarting REST API server on port " << port << std::endl;
     std::cout << "Screener endpoints available at /api/screener/*" << std::endl;
     std::cout << "Replay endpoints available at /api/replay/*" << std::endl;
     std::cout << "Live endpoints available at /api/live/*" << std::endl;

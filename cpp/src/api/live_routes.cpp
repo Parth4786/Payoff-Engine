@@ -17,6 +17,8 @@
 
 #include "kite/subscription_manager.hpp"
 #include "core/instrument_manager.hpp"
+#include "core/http_client.hpp"
+#include "core/config.hpp"
 #include "cache/market_cache.hpp"
 
 #include <chrono>
@@ -26,6 +28,9 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+// Default token service URL (can be overridden in .env as KITE_ACCESS_TOKEN_URL)
+static constexpr const char* DEFAULT_TOKEN_SERVICE_URL = "http://110.172.21.62:5005/token/zerodha";
 
 namespace payoff::api {
 
@@ -40,6 +45,130 @@ std::shared_ptr<core::InstrumentManager> g_instrument_manager;
 std::shared_ptr<cache::MarketCache> g_market_cache;
 std::mutex g_live_mutex;
 bool g_live_initialized = false;
+
+// Helper: Parse JSON field from simple JSON response
+std::string parse_json_string(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\"";
+    size_t pos = json.find(search);
+    if (pos == std::string::npos) return "";
+    
+    pos = json.find(':', pos);
+    if (pos == std::string::npos) return "";
+    
+    // Skip whitespace after colon
+    pos++;
+    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+    
+    if (pos >= json.size() || json[pos] != '"') return "";
+    
+    size_t end = json.find('"', pos + 1);
+    if (end == std::string::npos) return "";
+    
+    return json.substr(pos + 1, end - pos - 1);
+}
+
+// Helper: Strip quotes and whitespace from a raw JSON string value
+std::string strip_quotes(std::string str) {
+    // Trim whitespace first
+    while (!str.empty() && (str.back() == '\n' || str.back() == '\r' || str.back() == ' ' || str.back() == '\t')) {
+        str.pop_back();
+    }
+    while (!str.empty() && (str.front() == '\n' || str.front() == '\r' || str.front() == ' ' || str.front() == '\t')) {
+        str.erase(0, 1);
+    }
+    // Then strip quotes
+    if (str.size() >= 2 && str.front() == '"' && str.back() == '"') {
+        return str.substr(1, str.size() - 2);
+    }
+    return str;
+}
+
+// Fetch credentials from token service (or use static access_token from .env)
+bool fetch_credentials_from_token_service(kite::KiteCredentials& creds) {
+    auto& cfg = config::config();
+    if (!cfg.is_loaded()) {
+        cfg.load();
+    }
+    
+    // Get api_key from .env (required)
+    std::string api_key = cfg.kite_api_key();
+    if (api_key.empty()) {
+        std::cerr << "[Live] KITE_API_KEY not set in .env\n";
+        return false;
+    }
+    
+    // Check if we already have a static access_token in .env
+    std::string access_token = cfg.kite_access_token();
+    if (!access_token.empty()) {
+        std::cout << "[Live] Using KITE_ACCESS_TOKEN from .env\n";
+        creds.api_key = api_key;
+        creds.access_token = access_token;
+        std::cout << "[Live] Credentials ready: api_key=" << creds.api_key.substr(0, 8) << "...\n";
+        return creds.is_valid();
+    }
+    
+    // Otherwise fetch from token service
+    std::string token_url = cfg.kite_access_token_url();
+    if (token_url.empty()) {
+        token_url = DEFAULT_TOKEN_SERVICE_URL;
+    }
+    
+    std::cout << "[Live] Fetching access_token from: " << token_url << "\n";
+    
+    // Parse URL to get host and path
+    std::string host, path;
+    bool is_https = false;
+    
+    if (token_url.substr(0, 8) == "https://") {
+        is_https = true;
+        token_url = token_url.substr(8);
+    } else if (token_url.substr(0, 7) == "http://") {
+        token_url = token_url.substr(7);
+    }
+    
+    auto slash_pos = token_url.find('/');
+    if (slash_pos != std::string::npos) {
+        host = token_url.substr(0, slash_pos);
+        path = token_url.substr(slash_pos);
+    } else {
+        host = token_url;
+        path = "/";
+    }
+    
+    core::HttpClient client;
+    client.set_base_url((is_https ? "https://" : "http://") + host);
+    client.set_timeout(10000);
+    
+    auto response = client.get(path);
+    
+    if (!response.ok()) {
+        std::cerr << "[Live] Failed to fetch access_token: " 
+                  << response.error_message << " (status: " << response.status_code << ")\n";
+        return false;
+    }
+    
+    // Token service returns just the access_token as a quoted string: "xxxx"
+    access_token = strip_quotes(response.body);
+    
+    // Trim any whitespace/newlines
+    while (!access_token.empty() && (access_token.back() == '\n' || access_token.back() == '\r' || access_token.back() == ' ')) {
+        access_token.pop_back();
+    }
+    
+    if (access_token.empty()) {
+        std::cerr << "[Live] Token service returned empty access_token\n";
+        return false;
+    }
+    
+    creds.api_key = api_key;
+    creds.access_token = access_token;
+    
+    std::cout << "[Live] Credentials ready: api_key=" << creds.api_key.substr(0, 8) << "..., "
+              << "access_token=" << creds.access_token.substr(0, 8) << "... (" 
+              << creds.access_token.size() << " chars)\n";
+    
+    return creds.is_valid();
+}
 
 } // anonymous namespace
 
@@ -75,6 +204,24 @@ void init_live_data_service(
     g_subscription_manager->on_error([](const std::string& symbol, const std::string& error) {
         std::cerr << "[Live] Error for " << symbol << ": " << error << "\n";
     });
+    
+    // Try to load credentials from config first
+    int cred_idx = g_subscription_manager->add_credentials_from_config();
+    
+    // If no config credentials, try the token service
+    if (cred_idx < 0) {
+        kite::KiteCredentials creds;
+        if (fetch_credentials_from_token_service(creds)) {
+            cred_idx = g_subscription_manager->add_credentials(creds);
+        }
+    }
+    
+    // Auto-start if credentials were loaded
+    if (cred_idx >= 0) {
+        g_subscription_manager->start();
+    } else {
+        std::cout << "[Live] No credentials available - use POST /api/live/credentials to add\n";
+    }
     
     g_live_initialized = true;
     
