@@ -82,7 +82,14 @@ public:
         return *this;
     }
     
-    WSJsonBuilder& value(const std::string& v) { ss_ << "\"" << v << "\""; return *this; }
+    WSJsonBuilder& value(const std::string& v) {
+        ss_ << "\"" << escape(v) << "\"";
+        return *this;
+    }
+    WSJsonBuilder& value(const char* v) {
+        ss_ << "\"" << escape(v ? std::string(v) : std::string()) << "\"";
+        return *this;
+    }
     WSJsonBuilder& value(double v) { ss_ << v; return *this; }
     WSJsonBuilder& value(int64_t v) { ss_ << v; return *this; }
     WSJsonBuilder& value(bool v) { ss_ << (v ? "true" : "false"); return *this; }
@@ -93,6 +100,22 @@ public:
 private:
     std::ostringstream ss_;
     bool first_ = true;
+
+    static std::string escape(const std::string& s) {
+        std::string result;
+        result.reserve(s.size());
+        for (char c : s) {
+            switch (c) {
+                case '"': result += "\\\""; break;
+                case '\\': result += "\\\\"; break;
+                case '\n': result += "\\n"; break;
+                case '\r': result += "\\r"; break;
+                case '\t': result += "\\t"; break;
+                default: result += c;
+            }
+        }
+        return result;
+    }
 };
 
 // ============================================================================

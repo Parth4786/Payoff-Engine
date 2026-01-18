@@ -156,7 +156,7 @@ public:
         // Query ALL 5 depth levels as they exist in tick_data_db.market_data
         std::ostringstream query;
         query << "SELECT instrument_id, tradingsymbol, "
-              << "toUnixTimestamp64Milli(exchange_timestamp) as ts_ms, "
+              << "toInt64(toUnixTimestamp(exchange_timestamp)) * 1000 as ts_ms, "
               << "last_price, total_traded_quantity, "
               // Bid depth (5 levels)
               << "bid_price_0, bid_size_0, bid_orders_0, "
@@ -252,7 +252,7 @@ public:
                     // Use correct column names from tick_data_db.market_data schema
                     std::ostringstream query;
                     query << "SELECT instrument_id, tradingsymbol, "
-                          << "toUnixTimestamp64Milli(exchange_timestamp) as ts_ms, "
+                          << "toInt64(toUnixTimestamp(exchange_timestamp)) * 1000 as ts_ms, "
                           << "last_price, total_traded_quantity, "
                           // Bid depth (5 levels)
                           << "bid_price_0, bid_size_0, bid_orders_0, "
@@ -270,7 +270,7 @@ public:
                           << "total_buy_quantity, total_sell_quantity, "
                           << "open_price, high_price, low_price, close_price "
                           << "FROM " << ch_config_.database << "." << table_ << " "
-                          << "WHERE toUnixTimestamp64Milli(exchange_timestamp) > " << watermark_ << " ";
+                          << "WHERE toInt64(toUnixTimestamp(exchange_timestamp)) * 1000 > " << watermark_ << " ";
                     
                     // Filter by subscribed symbols (as exchange_tokens)
                     {
@@ -355,7 +355,7 @@ private:
     // ========================================================================
     
     int64_t get_max_timestamp() const {
-        std::string query = "SELECT max(toUnixTimestamp64Milli(exchange_timestamp)) FROM " +
+        std::string query = "SELECT max(toInt64(toUnixTimestamp(exchange_timestamp)) * 1000) FROM " +
                             ch_config_.database + "." + table_ + " FORMAT TabSeparated";
         try {
             std::string result = clickhouse_execute_query(ch_config_, query);

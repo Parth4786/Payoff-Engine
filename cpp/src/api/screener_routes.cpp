@@ -48,6 +48,10 @@ public:
         ss_ << "\"" << escape(v) << "\""; 
         return *this; 
     }
+    ScreenerJsonBuilder& value(const char* v) {
+        ss_ << "\"" << escape(v ? std::string(v) : std::string()) << "\"";
+        return *this;
+    }
     ScreenerJsonBuilder& value(double v) { 
         ss_ << std::fixed << std::setprecision(4) << v; 
         return *this; 

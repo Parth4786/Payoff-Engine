@@ -48,6 +48,10 @@ public:
         ss_ << "\"" << escape(v) << "\""; 
         return *this; 
     }
+    ReplayJsonBuilder& value(const char* v) {
+        ss_ << "\"" << escape(v ? std::string(v) : std::string()) << "\"";
+        return *this;
+    }
     ReplayJsonBuilder& value(double v) { 
         ss_ << std::fixed << std::setprecision(4) << v; 
         return *this; 

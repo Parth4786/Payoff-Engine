@@ -248,7 +248,7 @@ struct ScreenerService::Impl {
               << "instrument_id, tradingsymbol, instrument_type, "
               << "last_price, bid_price_0, ask_price_0, "
               << "total_traded_quantity, toInt64(0) as open_interest, "
-              << "toUnixTimestamp64Milli(exchange_timestamp) as ts_ms, "
+              << "toInt64(toUnixTimestamp(exchange_timestamp)) * 1000 as ts_ms, "
               << "exchange, expiry, strike, "
               << "open_price, high_price, low_price, close_price "
               << "FROM " << ch_config.database << "." << table << " "
@@ -628,7 +628,7 @@ struct ScreenerService::Impl {
         std::ostringstream query;
         query << "SELECT "
               << "instrument_id, tradingsymbol, "
-              << "toUnixTimestamp64Milli(exchange_timestamp) as ts_ms, "
+              << "toInt64(toUnixTimestamp(exchange_timestamp)) * 1000 as ts_ms, "
               << "last_price, bid_price_0, ask_price_0, "
               << "total_traded_quantity, toInt64(0) as open_interest "
               << "FROM " << ch_config.database << "." << table << " "
@@ -768,7 +768,7 @@ std::vector<Timestamp> ScreenerService::get_available_timestamps(
     
     std::ostringstream query;
     query << "SELECT DISTINCT "
-          << "toUnixTimestamp64Milli(toStartOfMinute(exchange_timestamp)) as ts_ms "
+            << "toInt64(toUnixTimestamp(toStartOfMinute(exchange_timestamp))) * 1000 as ts_ms "
           << "FROM " << impl_->ch_config.database << "." << impl_->table << " "
           << "WHERE exchange_timestamp >= '" << impl_->timestamp_to_sql(start) << "' "
           << "AND exchange_timestamp <= '" << impl_->timestamp_to_sql(end) << "' "
@@ -779,8 +779,15 @@ std::vector<Timestamp> ScreenerService::get_available_timestamps(
     clickhouse_query_stream(impl_->ch_config, query.str(),
         [&](const std::vector<std::string>& cols) {
             if (cols.empty()) return true;
-            
-            Timestamp ts(std::stoll(cols[0]));
+
+            int64_t ts_value = 0;
+            try {
+                ts_value = std::stoll(cols[0]);
+            } catch (...) {
+                return true;  // skip unparsable rows (e.g. \N)
+            }
+
+            Timestamp ts(ts_value);
             if ((ts - last).count() >= sample_interval_seconds * 1000) {
                 result.push_back(ts);
                 last = ts;
@@ -911,7 +918,7 @@ void ScreenerService::stream_replay(
     std::ostringstream query;
     query << "SELECT "
           << "instrument_id, tradingsymbol, "
-          << "toUnixTimestamp64Milli(exchange_timestamp) as ts_ms, "
+                    << "toInt64(toUnixTimestamp(exchange_timestamp)) * 1000 as ts_ms, "
           << "last_price, bid_price_0, ask_price_0, "
             << "total_traded_quantity, toInt64(0) as open_interest "
           << "FROM " << impl_->ch_config.database << "." << impl_->table << " "
