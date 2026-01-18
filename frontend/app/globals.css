@@ -1,0 +1,244 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 10 10 11;
+    --foreground: 250 250 250;
+    --card: 24 24 27;
+    --card-foreground: 250 250 250;
+    --popover: 24 24 27;
+    --popover-foreground: 250 250 250;
+    --primary: 139 92 246;
+    --primary-foreground: 250 250 250;
+    --secondary: 39 39 42;
+    --secondary-foreground: 250 250 250;
+    --muted: 39 39 42;
+    --muted-foreground: 113 113 122;
+    --accent: 139 92 246;
+    --accent-foreground: 250 250 250;
+    --destructive: 239 68 68;
+    --destructive-foreground: 250 250 250;
+    --border: 39 39 42;
+    --input: 39 39 42;
+    --ring: 139 92 246;
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    @apply bg-background-secondary;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-foreground-muted;
+  }
+}
+
+@layer components {
+  /* Card styles */
+  .card {
+    @apply bg-background-secondary border border-border rounded-lg;
+  }
+  
+  .card-header {
+    @apply px-4 py-3 border-b border-border;
+  }
+  
+  .card-title {
+    @apply text-sm font-semibold text-foreground;
+  }
+  
+  .card-content {
+    @apply p-4;
+  }
+  
+  /* Stat badge */
+  .stat-badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono;
+  }
+  
+  .stat-badge-profit {
+    @apply stat-badge bg-profit/10 text-profit;
+  }
+  
+  .stat-badge-loss {
+    @apply stat-badge bg-loss/10 text-loss;
+  }
+  
+  .stat-badge-neutral {
+    @apply stat-badge bg-background-tertiary text-foreground-secondary;
+  }
+  
+  /* Greek badge */
+  .greek-badge {
+    @apply inline-flex flex-col items-center gap-0.5 px-3 py-2 rounded bg-background-tertiary;
+  }
+  
+  .greek-label {
+    @apply text-xs text-foreground-muted;
+  }
+  
+  .greek-value {
+    @apply text-sm font-mono font-medium;
+  }
+  
+  /* Table styles */
+  .data-table {
+    @apply w-full text-sm;
+  }
+  
+  .data-table th {
+    @apply px-3 py-2 text-left text-xs font-medium text-foreground-muted uppercase tracking-wider bg-background-tertiary;
+  }
+  
+  .data-table td {
+    @apply px-3 py-2 border-b border-border;
+  }
+  
+  .data-table tbody tr:hover {
+    @apply bg-background-tertiary/50;
+  }
+  
+  /* Heatmap cell */
+  .heatmap-cell {
+    @apply w-8 h-8 flex items-center justify-center text-xs font-mono rounded;
+  }
+  
+  /* Timeline scrubber */
+  .timeline-track {
+    @apply h-2 bg-background-tertiary rounded-full relative;
+  }
+  
+  .timeline-progress {
+    @apply h-full bg-accent rounded-full;
+  }
+  
+  .timeline-thumb {
+    @apply w-4 h-4 bg-accent rounded-full absolute top-1/2 -translate-y-1/2 -translate-x-1/2 cursor-grab shadow-lg;
+  }
+  
+  .timeline-thumb:active {
+    @apply cursor-grabbing;
+  }
+  
+  /* Status indicators */
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+  
+  .status-healthy {
+    @apply status-dot bg-profit animate-pulse-slow;
+  }
+  
+  .status-warning {
+    @apply status-dot bg-warning animate-pulse;
+  }
+  
+  .status-error {
+    @apply status-dot bg-loss;
+  }
+  
+  .status-stale {
+    @apply status-dot bg-foreground-muted;
+  }
+}
+
+@layer utilities {
+  /* Gradient text */
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-accent to-info;
+  }
+  
+  /* Glow effects */
+  .glow-accent {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+  }
+  
+  .glow-profit {
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
+  }
+  
+  .glow-loss {
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+  }
+  
+  /* Glass effect */
+  .glass {
+    @apply bg-background-secondary/80 backdrop-blur-sm;
+  }
+  
+  /* Noise overlay */
+  .noise {
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    opacity: 0.03;
+  }
+  
+  /* Fade animations */
+  .animate-in {
+    animation: animateIn 0.3s ease-out;
+  }
+  
+  @keyframes animateIn {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  /* Number mono */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Chart container */
+.recharts-wrapper {
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+.recharts-cartesian-axis-tick-value {
+  @apply fill-foreground-muted text-xs;
+}
+
+.recharts-legend-item-text {
+  @apply text-foreground-secondary;
+}
+
+.recharts-tooltip-wrapper {
+  @apply outline-none;
+}
+
+/* Kill zone overlay */
+.kill-zone {
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 4px,
+    rgba(239, 68, 68, 0.1) 4px,
+    rgba(239, 68, 68, 0.1) 8px
+  );
+}
