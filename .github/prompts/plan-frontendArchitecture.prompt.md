@@ -10,6 +10,97 @@ The core differentiator is **deterministic replay mode** where:
 3. As time advances to T+N, actual data becomes visible
 4. Compare predicted vs actual to find insights and improve decision-making
 
+### 🔄 Typical End-to-End Workflow
+
+```
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                        DISCOVERY → BUILD → SIMULATE                            │
+└────────────────────────────────────────────────────────────────────────────────┘
+
+STEP 1: DISCOVER OPTIONS AT TIME T (Screener)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+┌─────────────────────────────────────────────────────────────┐
+│  SCREENER @ 2025-01-15 09:30:00                             │
+│  ─────────────────────────────────────────────────────────  │
+│  Filter: NIFTY | DTE 7-14 | IV% > 50th percentile          │
+│                                                             │
+│  [POST /api/screener/replay]                                │
+│  {                                                          │
+│    "underlying": "NIFTY",                                   │
+│    "timestamp": 1736931000000,  ← Historical timestamp T    │
+│    "filters": {"dte_min": 7, "dte_max": 14, "iv_pct_min": 50}│
+│  }                                                          │
+│                                                             │
+│  Result: Options that EXISTED at that moment                │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ NIFTY25JAN26300CE │ IV: 15.2% │ Δ: 0.52 │ ₹285       │  │
+│  │ NIFTY25JAN26400CE │ IV: 14.8% │ Δ: 0.44 │ ₹220       │  │
+│  │ NIFTY25JAN26500CE │ IV: 14.5% │ Δ: 0.36 │ ₹165       │  │
+│  └──────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+STEP 2: BUILD STRATEGY FROM DISCOVERED OPTIONS (Strategy Builder)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+┌─────────────────────────────────────────────────────────────┐
+│  STRATEGY BUILDER                                           │
+│  ─────────────────────────────────────────────────────────  │
+│  Drag from screener or option chain @ T:                    │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ ● BUY  NIFTY25JAN26300CE x1 @ ₹285 (price at T)    │   │
+│  │ ○ SELL NIFTY25JAN26500CE x1 @ ₹165 (price at T)    │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  Strategy: Bull Call Spread                                 │
+│  Net Debit: ₹3,000 (using prices AT timestamp T)           │
+│  Max Profit: ₹5,000 | Max Loss: ₹3,000                     │
+│                                                             │
+│  [Simulate This Strategy →]                                 │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+STEP 3: REPLAY T → T+N (Replay Mode)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+┌─────────────────────────────────────────────────────────────┐
+│  REPLAY: 2025-01-15 09:30 → 2025-01-15 15:30               │
+│  ─────────────────────────────────────────────────────────  │
+│                                                             │
+│  [POST /api/replay/strategy]                                │
+│  {                                                          │
+│    "strategy": { legs from step 2 },                        │
+│    "start_timestamp": 1736931000000,   ← T (09:30)         │
+│    "end_timestamp": 1736952600000,     ← T+N (15:30)       │
+│    "interval_ms": 60000                                     │
+│  }                                                          │
+│                                                             │
+│  Timeline: ══════════●════════════════════●═════════════   │
+│            09:30    11:00              14:00    15:30       │
+│            Start    "I see P&L = -₹500"       Actual EOD   │
+│                                                             │
+│  At 11:00 (during replay):                                  │
+│  ┌─────────────────────┬─────────────────────────────────┐ │
+│  │ WHAT YOU SAW @ 11:00│ ACTUAL @ 15:30 (revealed later) │ │
+│  │ ────────────────────│ ─────────────────────────────── │ │
+│  │ Spot: 26,320        │ Spot: 26,480                    │ │
+│  │ P&L: -₹500          │ P&L: +₹4,200                    │ │
+│  │ Prediction: +₹3,800 │ Deviation: +₹400 (10.5%)        │ │
+│  │ if spot = 26,500    │                                 │ │
+│  └─────────────────────┴─────────────────────────────────┘ │
+│                                                             │
+│  💡 INSIGHT: "Prediction was accurate — actual P&L +10.5%  │
+│              better due to IV crush and faster theta decay"│
+└─────────────────────────────────────────────────────────────┘
+```
+
+**API Flow Summary:**
+```
+1. GET  /api/screener/replay     → Discover options at T
+2. POST /api/payoff/calculate    → Build strategy, see payoff at T
+3. POST /api/replay/strategy     → Simulate T → T+N
+4. POST /api/replay/compare      → Get prediction vs actual deviation
+```
+
 ---
 
 ## Tech Stack Decision: Next.js 14 + React 18
