@@ -14,10 +14,11 @@ export function OptionChainPicker({ spotPrice }: Props) {
   const { strategy, addLeg } = useStrategy();
   const { expiries } = useScreener();
   const [selectedExpiry, setSelectedExpiry] = useState<number | undefined>();
+  const effectiveExpiry = selectedExpiry ?? expiries[0]?.expiry_ms;
   
   const { data: chainData, isLoading, refetch } = useOptionChain(
     strategy.underlying,
-    selectedExpiry
+    effectiveExpiry
   );
 
   const handleAddLeg = (strike: number, type: OptionType, side: Side, premium: number) => {
