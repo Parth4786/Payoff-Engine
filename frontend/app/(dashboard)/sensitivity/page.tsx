@@ -5,7 +5,9 @@ import { Navbar } from '@/components/shared';
 import { GreekHeatmap } from '@/components/sensitivity/GreekHeatmap';
 import { SurfaceControls } from '@/components/sensitivity/SurfaceControls';
 import { KillZoneOverlay } from '@/components/sensitivity/KillZoneOverlay';
-import { useStrategy, useSensitivitySurfaces } from '@/hooks';
+import { ReplayControls } from '@/components/replay/ReplayControls';
+import { TimelineScrubber } from '@/components/replay/TimelineScrubber';
+import { useReplay, useStrategy, useSensitivitySurfaces } from '@/hooks';
 import { Grid2X2, Layers } from 'lucide-react';
 import Link from 'next/link';
 
@@ -13,12 +15,34 @@ type GreekType = 'delta' | 'gamma' | 'theta' | 'vega';
 
 export default function SensitivityPage() {
   const { strategy } = useStrategy();
+  const {
+    snapshots,
+    currentSnapshot,
+    status,
+    speed,
+    play,
+    pause,
+    seek,
+    setSpeed,
+    getCurrentSnapshotIndex,
+  } = useReplay();
   const [selectedGreeks, setSelectedGreeks] = useState<GreekType[]>(['delta', 'gamma', 'theta', 'vega']);
   const [showKillZone, setShowKillZone] = useState(true);
   const [daysToExpiry, setDaysToExpiry] = useState(7);
   const [ivShift, setIvShift] = useState(0);
+  const [useReplayTime, setUseReplayTime] = useState(false);
+  const isPlaying = status === 'playing';
+  const replayAvailable = snapshots.length > 0;
+  const currentReplayIndex = Math.max(0, getCurrentSnapshotIndex());
+  const replaySpot = useReplayTime ? currentSnapshot?.underlying_price : undefined;
+  const replayTimestamp = useReplayTime ? currentSnapshot?.timestamp : undefined;
   
-  const { data: surfacesData, isLoading } = useSensitivitySurfaces(daysToExpiry, ivShift);
+  const { data: surfacesData, isLoading } = useSensitivitySurfaces(
+    daysToExpiry,
+    ivShift,
+    replaySpot,
+    replayTimestamp
+  );
   
   // Transform SensitivitySurface[] to lookup by type with HeatmapCell format
   const surfaces = surfacesData?.reduce((acc, surface) => {
@@ -69,6 +93,62 @@ export default function SensitivityPage() {
       />
 
       <div className="p-6 space-y-6">
+        {replayAvailable ? (
+          <div className="card">
+            <div className="card-header flex items-center justify-between">
+              <h2 className="card-title">Replay Timeline</h2>
+              <button
+                onClick={() => setUseReplayTime((prev) => !prev)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  useReplayTime
+                    ? 'bg-info/20 text-info'
+                    : 'bg-background-tertiary text-foreground-muted hover:text-foreground'
+                }`}
+              >
+                {useReplayTime ? 'Using Replay' : 'Use Replay'}
+              </button>
+            </div>
+            <div className="card-content space-y-4">
+              <TimelineScrubber
+                snapshots={snapshots}
+                currentIndex={currentReplayIndex}
+                onSeek={(index) => {
+                  const snapshot = snapshots[index];
+                  if (snapshot) seek(snapshot.timestamp);
+                }}
+              />
+              <ReplayControls
+                isPlaying={isPlaying}
+                speed={speed}
+                onPlay={play}
+                onPause={pause}
+                onSpeedChange={setSpeed}
+                currentSnapshot={currentSnapshot}
+              />
+              <div className="text-xs text-foreground-muted">
+                Replay-driven spot is used when "Use Replay" is enabled.
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="card">
+            <div className="card-content flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium">Sensitivity over time</div>
+                <div className="text-xs text-foreground-muted">
+                  Start a replay session to scrub sensitivity changes.
+                </div>
+              </div>
+              <Link
+                href="/replay"
+                className="px-3 py-2 bg-accent text-white rounded-lg text-xs font-medium hover:bg-accent/90 transition-colors"
+              >
+                Open Replay
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* Controls */}
         <div className="card">
           <div className="card-content">

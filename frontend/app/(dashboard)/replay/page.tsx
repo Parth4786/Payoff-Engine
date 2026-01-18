@@ -45,7 +45,7 @@ export default function ReplayPage() {
     : null;
   const isPlaying = status === 'playing';
   const isLoading = status === 'loading' || isLoadingReplay;
-  const currentIndex = getCurrentSnapshotIndex();
+  const currentIndex = Math.max(0, getCurrentSnapshotIndex());
   const prediction = predictionData;
   const comparison = comparisonData;
 
@@ -217,7 +217,10 @@ export default function ReplayPage() {
                 <TimelineScrubber
                   snapshots={snapshots}
                   currentIndex={currentIndex}
-                  onSeek={seek}
+                  onSeek={(index) => {
+                    const snapshot = snapshots[index];
+                    if (snapshot) seek(snapshot.timestamp);
+                  }}
                 />
               </div>
             </div>

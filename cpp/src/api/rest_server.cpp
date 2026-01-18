@@ -17,15 +17,18 @@
 #include "core/config.hpp"
 #include "core/models.hpp"
 #include "core/instrument_manager.hpp"
+#include "cache/market_cache.hpp"
 #include "payoff/calculator.hpp"
 #include "payoff/pricing.hpp"
 #include "payoff/models.hpp"
 
-
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <iomanip>
 #include <cmath>
+#include <cctype>
+#include <vector>
 
 namespace payoff::api {
 
@@ -39,41 +42,47 @@ namespace {
 class JsonBuilder {
 public:
     JsonBuilder& start_object() {
+        mark_value_written_();
         ss_ << "{";
-        first_ = true;
+        first_stack_.push_back(true);
         return *this;
     }
     
     JsonBuilder& end_object() {
         ss_ << "}";
+        if (first_stack_.size() > 1) first_stack_.pop_back();
         return *this;
     }
     
     JsonBuilder& start_array() {
+        mark_value_written_();
         ss_ << "[";
-        first_ = true;
+        first_stack_.push_back(true);
         return *this;
     }
     
     JsonBuilder& end_array() {
         ss_ << "]";
+        if (first_stack_.size() > 1) first_stack_.pop_back();
         return *this;
     }
     
     JsonBuilder& key(const std::string& k) {
-        if (!first_) ss_ << ",";
+        if (!first_stack_.empty() && !first_stack_.back()) ss_ << ",";
         ss_ << "\"" << k << "\":";
-        first_ = false;
+        if (!first_stack_.empty()) first_stack_.back() = false;
         return *this;
     }
     
     JsonBuilder& value(const std::string& v) {
         ss_ << "\"" << escape(v) << "\"";
+        mark_value_written_();
         return *this;
     }
 
     JsonBuilder& value(const char* v) {
         ss_ << "\"" << escape(v ? std::string(v) : std::string()) << "\"";
+        mark_value_written_();
         return *this;
     }
     
@@ -83,40 +92,47 @@ public:
                 // JSON does not support Infinity, but large exponents are valid JSON numbers.
                 // JSON.parse("1e309") yields Infinity in JS.
                 ss_ << (v > 0 ? "1e309" : "-1e309");
+                mark_value_written_();
                 return *this;
             }
             // NaN: emit a safe numeric value
             ss_ << "0";
+            mark_value_written_();
             return *this;
         }
 
         ss_ << std::fixed << std::setprecision(4) << v;
+        mark_value_written_();
         return *this;
     }
     
     JsonBuilder& value(int v) {
         ss_ << v;
+        mark_value_written_();
         return *this;
     }
     
     JsonBuilder& value(int64_t v) {
         ss_ << v;
+        mark_value_written_();
         return *this;
     }
     
     JsonBuilder& value(bool v) {
         ss_ << (v ? "true" : "false");
+        mark_value_written_();
         return *this;
     }
     
     JsonBuilder& raw(const std::string& r) {
         ss_ << r;
+        mark_value_written_();
         return *this;
     }
     
     JsonBuilder& next() {
         ss_ << ",";
-        first_ = false;
+        if (!first_stack_.empty()) first_stack_.back() = false;
         return *this;
     }
     
@@ -124,7 +140,11 @@ public:
     
 private:
     std::ostringstream ss_;
-    bool first_ = true;
+    std::vector<bool> first_stack_{true};
+
+    void mark_value_written_() {
+        if (!first_stack_.empty()) first_stack_.back() = false;
+    }
     
     static std::string escape(const std::string& s) {
         std::string result;
@@ -149,7 +169,7 @@ std::string json_get_string(const std::string& json, const std::string& key) {
     if (pos == std::string::npos) return "";
     
     pos += search.length();
-    while (pos < json.length() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+    while (pos < json.length() && std::isspace(static_cast<unsigned char>(json[pos]))) pos++;
     
     if (pos >= json.length() || json[pos] != '"') return "";
     pos++;
@@ -166,7 +186,7 @@ double json_get_double(const std::string& json, const std::string& key) {
     if (pos == std::string::npos) return 0.0;
     
     pos += search.length();
-    while (pos < json.length() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+    while (pos < json.length() && std::isspace(static_cast<unsigned char>(json[pos]))) pos++;
     
     auto end = json.find_first_of(",}]", pos);
     if (end == std::string::npos) return 0.0;
@@ -180,6 +200,144 @@ double json_get_double(const std::string& json, const std::string& key) {
 
 int json_get_int(const std::string& json, const std::string& key) {
     return static_cast<int>(json_get_double(json, key));
+}
+
+static std::string extract_object_after_key(const std::string& json, const std::string& key) {
+    const std::string search = "\"" + key + "\":";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return "";
+    pos += search.size();
+    while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) pos++;
+    if (pos >= json.size() || json[pos] != '{') return "";
+
+    size_t i = pos;
+    int depth = 0;
+    bool in_string = false;
+    bool escape = false;
+
+    for (; i < json.size(); ++i) {
+        const char c = json[i];
+        if (in_string) {
+            if (escape) {
+                escape = false;
+                continue;
+            }
+            if (c == '\\') {
+                escape = true;
+                continue;
+            }
+            if (c == '"') in_string = false;
+            continue;
+        }
+
+        if (c == '"') {
+            in_string = true;
+            continue;
+        }
+        if (c == '{') depth++;
+        else if (c == '}') {
+            depth--;
+            if (depth == 0) {
+                return json.substr(pos, i - pos + 1);
+            }
+        }
+    }
+    return "";
+}
+
+static std::vector<std::string> parse_string_array_after_key(const std::string& json, const std::string& key) {
+    std::vector<std::string> items;
+    const std::string search = "\"" + key + "\":";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return items;
+    pos += search.size();
+    while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) pos++;
+    if (pos >= json.size() || json[pos] != '[') return items;
+
+    auto end = json.find(']', pos);
+    if (end == std::string::npos) return items;
+    const std::string arr = json.substr(pos, end - pos + 1);
+
+    size_t i = 0;
+    while ((i = arr.find('"', i)) != std::string::npos) {
+        auto j = arr.find('"', i + 1);
+        if (j == std::string::npos) break;
+        items.push_back(arr.substr(i + 1, j - i - 1));
+        i = j + 1;
+    }
+    return items;
+}
+
+static engine::Strategy parse_strategy_string(const std::string& body) {
+    engine::Strategy strategy;
+
+    strategy.underlying = json_get_string(body, "underlying");
+    if (strategy.underlying.empty()) strategy.underlying = "NIFTY";
+
+    strategy.name = json_get_string(body, "name");
+    if (strategy.name.empty()) strategy.name = "Custom Strategy";
+
+    double spot = json_get_double(body, "spot");
+    if (spot <= 0) spot = json_get_double(body, "underlying_price");
+    if (spot <= 0) spot = 26300.0;
+    strategy.underlying_price = spot;
+
+    auto legs_pos = body.find("\"legs\"");
+    if (legs_pos != std::string::npos) {
+        auto arr_start = body.find('[', legs_pos);
+        auto arr_end = body.find(']', arr_start);
+        if (arr_start != std::string::npos && arr_end != std::string::npos) {
+            const std::string legs_str = body.substr(arr_start, arr_end - arr_start + 1);
+
+            size_t pos = 0;
+            while ((pos = legs_str.find('{', pos)) != std::string::npos) {
+                auto leg_end = legs_str.find('}', pos);
+                if (leg_end == std::string::npos) break;
+
+                const std::string leg_json = legs_str.substr(pos, leg_end - pos + 1);
+                engine::OptionLeg leg;
+
+                const std::string type_str = json_get_string(leg_json, "type");
+                leg.type = (type_str == "PE" || type_str == "PUT") ? engine::OptionType::Put
+                                                                     : engine::OptionType::Call;
+
+                const std::string side_str = json_get_string(leg_json, "side");
+                leg.side = (side_str == "SELL" || side_str == "sell") ? engine::Side::Sell
+                                                                          : engine::Side::Buy;
+
+                leg.strike = json_get_double(leg_json, "strike");
+
+                leg.quantity = static_cast<int>(json_get_double(leg_json, "qty"));
+                if (leg.quantity == 0) leg.quantity = static_cast<int>(json_get_double(leg_json, "quantity"));
+                if (leg.quantity <= 0) leg.quantity = 1;
+
+                leg.lot_size = static_cast<int>(json_get_double(leg_json, "lot"));
+                if (leg.lot_size == 0) leg.lot_size = static_cast<int>(json_get_double(leg_json, "lot_size"));
+                if (leg.lot_size <= 0) leg.lot_size = 25;
+
+                leg.premium = json_get_double(leg_json, "premium");
+
+                const int instrument_id = json_get_int(leg_json, "instrument_id");
+                if (instrument_id > 0) leg.instrument_id = static_cast<uint32_t>(instrument_id);
+
+                const auto sym = json_get_string(leg_json, "symbol");
+                if (!sym.empty()) leg.symbol = sym;
+
+                if (leg.strike > 0) strategy.legs.push_back(leg);
+                pos = leg_end + 1;
+            }
+        }
+    }
+
+    return strategy;
+}
+
+static std::vector<std::string> parse_sensitivity_types_string(const std::string& body) {
+    auto types = parse_string_array_after_key(body, "types");
+    if (!types.empty()) return types;
+    const auto single = json_get_string(body, "type");
+    if (!single.empty()) return { single };
+    return { "delta" };
 }
 
 } // anonymous namespace
@@ -235,11 +393,7 @@ public:
         server.Post("/api/payoff/calculate", [](const http::Request& req, http::Response& res) {
             // Expected: { underlying: "NIFTY", spot: 26300, legs: [...] }
 
-            std::string underlying = json_get_string(req.body, "underlying");
-            if (underlying.empty()) underlying = "NIFTY";
-
-            double spot = json_get_double(req.body, "spot");
-            if (spot <= 0) spot = 26300.0;
+            engine::Strategy strategy = parse_strategy_string(req.body);
 
             auto resolve_lot_size = [&](const std::string& u) -> int {
                 try {
@@ -263,63 +417,10 @@ public:
                 return 25;
             };
 
-            const int default_lot_size = resolve_lot_size(underlying);
-
-            engine::Strategy strategy;
-            strategy.name = json_get_string(req.body, "name");
-            if (strategy.name.empty()) strategy.name = "Custom Strategy";
-            strategy.underlying = underlying;
-            strategy.underlying_price = spot;
-
-            // Parse legs
-            auto legs_pos = req.body.find("\"legs\"");
-            if (legs_pos != std::string::npos) {
-                auto arr_start = req.body.find('[', legs_pos);
-                auto arr_end = req.body.find(']', arr_start);
-                if (arr_start != std::string::npos && arr_end != std::string::npos) {
-                    std::string legs_str = req.body.substr(arr_start, arr_end - arr_start + 1);
-
-                    size_t pos = 0;
-                    while ((pos = legs_str.find('{', pos)) != std::string::npos) {
-                        auto leg_end = legs_str.find('}', pos);
-                        if (leg_end == std::string::npos) break;
-
-                        std::string leg_json = legs_str.substr(pos, leg_end - pos + 1);
-
-                        engine::OptionLeg leg;
-
-                        std::string type_str = json_get_string(leg_json, "type");
-                        if (type_str == "PE" || type_str == "PUT") {
-                            leg.type = engine::OptionType::Put;
-                        } else {
-                            leg.type = engine::OptionType::Call;
-                        }
-
-                        std::string side_str = json_get_string(leg_json, "side");
-                        if (side_str == "SELL" || side_str == "sell") {
-                            leg.side = engine::Side::Sell;
-                        } else {
-                            leg.side = engine::Side::Buy;
-                        }
-
-                        leg.strike = json_get_double(leg_json, "strike");
-                        leg.quantity = static_cast<int>(json_get_double(leg_json, "qty"));
-                        if (leg.quantity == 0) leg.quantity = static_cast<int>(json_get_double(leg_json, "quantity"));
-                        if (leg.quantity <= 0) leg.quantity = 1;
-
-                        leg.lot_size = static_cast<int>(json_get_double(leg_json, "lot"));
-                        if (leg.lot_size == 0) leg.lot_size = static_cast<int>(json_get_double(leg_json, "lot_size"));
-                        if (leg.lot_size <= 0) leg.lot_size = default_lot_size;
-
-                        leg.premium = json_get_double(leg_json, "premium");
-
-                        if (leg.strike > 0) {
-                            strategy.legs.push_back(leg);
-                        }
-
-                        pos = leg_end + 1;
-                    }
-                }
+            const int default_lot_size = resolve_lot_size(strategy.underlying);
+            for (auto& leg : strategy.legs) {
+                if (leg.lot_size <= 0) leg.lot_size = default_lot_size;
+                if (leg.quantity <= 0) leg.quantity = 1;
             }
 
             if (strategy.legs.empty()) {
@@ -342,8 +443,8 @@ public:
             JsonBuilder json;
             json.start_object()
                 .key("strategy").value(strategy.name)
-                .key("underlying").value(underlying)
-                .key("spot").value(spot)
+                .key("underlying").value(strategy.underlying)
+                .key("spot").value(strategy.underlying_price)
                 .key("max_profit").value(curve.max_profit)
                 .key("max_loss").value(curve.max_loss)
                 .key("net_premium").value(strategy.total_premium())
@@ -488,72 +589,139 @@ public:
         
         // Sensitivity surface
         server.Post("/api/sensitivity", [](const http::Request& req, http::Response& res) {
-            double spot = json_get_double(req.body, "spot");
-            if (spot <= 0) spot = 26300.0;
-            
-            double strike = json_get_double(req.body, "strike");
-            if (strike <= 0) strike = spot;
-            
-            double iv = json_get_double(req.body, "iv");
-            if (iv <= 0) iv = 0.15;
-            
-            std::string surface_type = json_get_string(req.body, "type");
-            if (surface_type.empty()) surface_type = "delta";
-            
-            // Generate surface (spot x time)
-            int spot_steps = 11;
-            int time_steps = 6;
-            double spot_range = 0.10;  // ±10%
-            
-            JsonBuilder json;
-            json.start_object()
-                .key("type").value(surface_type)
-                .key("spot_center").value(spot)
-                .key("strike").value(strike)
-                .key("iv").value(iv)
-                .key("surface").start_array();
-            
-            for (int i = 0; i < spot_steps; ++i) {
-                double S = spot * (1.0 - spot_range + 2.0 * spot_range * i / (spot_steps - 1));
-                
-                if (i > 0) json.next();
-                json.start_object()
-                    .key("spot").value(S)
-                    .key("values").start_array();
-                
-                for (int j = 0; j < time_steps; ++j) {
-                    double T = (5.0 + j * 10.0) / 365.0;  // 5, 15, 25, 35, 45, 55 days
-                    
-                    engine::PricingParams params;
-                    params.spot = S;
-                    params.strike = strike;
-                    params.time_to_expiry = T;
-                    params.volatility = iv;
-                    params.risk_free_rate = 0.07;
-                    
-                    double value = 0.0;
-                    if (surface_type == "delta") {
-                        value = engine::calculate_delta(params, engine::OptionType::Call);
-                    } else if (surface_type == "gamma") {
-                        value = engine::calculate_gamma(params);
-                    } else if (surface_type == "theta") {
-                        value = engine::calculate_theta(params, engine::OptionType::Call);
-                    } else if (surface_type == "vega") {
-                        value = engine::calculate_vega(params);
-                    }
-                    
-                    if (j > 0) json.next();
-                    json.start_object()
-                        .key("days").value(static_cast<int>(T * 365))
-                        .key("value").value(value)
-                    .end_object();
-                }
-                
-                json.end_array().end_object();
+            const std::string strategy_part = extract_object_after_key(req.body, "strategy");
+            const std::string& effective_body = strategy_part.empty() ? req.body : strategy_part;
+
+            engine::Strategy strategy = parse_strategy_string(effective_body);
+
+            if (strategy.legs.empty()) {
+                res.status = 400;
+                res.set_json("{\"error\":\"strategy legs required\"}");
+                return;
             }
-            
-            json.end_array().end_object();
-            res.set_json(json.str());
+
+            double spot_center = json_get_double(req.body, "spot");
+            if (spot_center <= 0) spot_center = json_get_double(req.body, "underlying_price");
+            if (spot_center <= 0 && strategy.underlying_price > 0) spot_center = strategy.underlying_price;
+            if (spot_center <= 0) spot_center = 26300.0;
+            strategy.underlying_price = spot_center;
+
+            double base_iv = json_get_double(req.body, "iv");
+            if (base_iv <= 0) base_iv = 0.20;
+
+            double iv_shift_pct = json_get_double(req.body, "iv_range_pct");
+            double spot_range_pct = json_get_double(req.body, "spot_range_pct");
+            if (spot_range_pct == 0.0) spot_range_pct = 5.0;
+            int spot_steps = json_get_int(req.body, "spot_steps");
+            if (spot_steps == 0) spot_steps = 21;
+            int days_range = json_get_int(req.body, "days_range");
+            if (days_range == 0) days_range = 30;
+
+            if (spot_steps < 2) spot_steps = 2;
+            if (spot_steps > 60) spot_steps = 60;
+            if (spot_range_pct <= 0) spot_range_pct = 5.0;
+            if (days_range < 0) days_range = 0;
+
+            const auto types = parse_sensitivity_types_string(req.body);
+
+            const double effective_iv = base_iv * (1.0 + iv_shift_pct / 100.0);
+            const double spot_range = spot_center * spot_range_pct / 100.0;
+            const double min_spot = spot_center - spot_range;
+            const double max_spot = spot_center + spot_range;
+            const double spot_step = (spot_steps > 1)
+                ? (max_spot - min_spot) / static_cast<double>(spot_steps - 1)
+                : 0.0;
+            const double day_step = (spot_steps > 1)
+                ? static_cast<double>(days_range) / static_cast<double>(spot_steps - 1)
+                : 0.0;
+
+            std::vector<double> spots;
+            spots.reserve(static_cast<size_t>(spot_steps));
+            for (int i = 0; i < spot_steps; ++i) {
+                spots.push_back(min_spot + spot_step * static_cast<double>(i));
+            }
+
+            std::vector<double> days_axis;
+            days_axis.reserve(static_cast<size_t>(spot_steps));
+            for (int i = 0; i < spot_steps; ++i) {
+                days_axis.push_back(day_step * static_cast<double>(i));
+            }
+
+            engine::PayoffCalculator calculator;
+            JsonBuilder out;
+            out.start_array();
+            bool any_surface = false;
+
+            for (const auto& type : types) {
+                if (type != "delta" && type != "gamma" && type != "theta" &&
+                    type != "vega" && type != "pnl") {
+                    continue;
+                }
+
+                if (any_surface) out.next();
+                any_surface = true;
+
+                out.start_object()
+                    .key("type").value(type)
+                    .key("spot_center").value(spot_center)
+                    .key("strike").value(0.0)
+                    .key("iv").value(effective_iv)
+                    .key("surface").start_array();
+
+                for (size_t si = 0; si < spots.size(); ++si) {
+                    if (si > 0) out.next();
+                    const double spot = spots[si];
+
+                    out.start_object()
+                        .key("spot").value(spot)
+                        .key("values").start_array();
+
+                    for (size_t di = 0; di < days_axis.size(); ++di) {
+                        if (di > 0) out.next();
+                        const double day_value = days_axis[di];
+                        const double tte_days = std::max(0.0, static_cast<double>(days_range) - day_value);
+                        const double tte_years = std::max(tte_days / 365.0, 1e-6);
+
+                        double value = 0.0;
+                        if (type == "pnl") {
+                            for (const auto& leg : strategy.legs) {
+                                value += calculator.calculate_leg_pnl_with_greeks(
+                                    leg, spot, effective_iv, tte_years);
+                            }
+                        } else {
+                            engine::Greeks greeks;
+                            for (const auto& leg : strategy.legs) {
+                                greeks += calculator.calculate_leg_greeks(
+                                    leg, spot, effective_iv, tte_years);
+                            }
+
+                            if (type == "delta") value = greeks.delta;
+                            else if (type == "gamma") value = greeks.gamma;
+                            else if (type == "theta") value = greeks.theta;
+                            else if (type == "vega") value = greeks.vega;
+                        }
+
+                        out.start_object()
+                            .key("days").value(day_value)
+                            .key("value").value(value)
+                            .end_object();
+                    }
+
+                    out.end_array().end_object();
+                }
+
+                out.end_array().end_object();
+            }
+
+            out.end_array();
+
+            if (!any_surface) {
+                res.status = 400;
+                res.set_json("{\"error\":\"no valid sensitivity types\"}");
+                return;
+            }
+
+            res.set_json(out.str());
         });
         
         // IV calculation
@@ -636,6 +804,74 @@ void setup_screener_routes(http::Server& server);
 // Forward declaration from replay_routes.cpp
 void setup_replay_routes(http::Server& server);
 
+// Forward declarations from live_routes.cpp
+std::string handle_live_subscribe(const std::string& body);
+std::string handle_live_unsubscribe(const std::string& body);
+std::string handle_live_subscribe_option_chain(const std::string& body);
+std::string handle_live_unsubscribe_option_chain(const std::string& body);
+std::string handle_live_get_subscriptions();
+std::string handle_live_get_stats();
+std::string handle_live_add_credentials(const std::string& body);
+std::string handle_live_remove_credentials(size_t index);
+std::string handle_live_start();
+std::string handle_live_stop();
+std::string handle_live_replace_subscriptions(const std::string& body);
+void init_live_data_service(
+    std::shared_ptr<core::InstrumentManager> instrument_manager,
+    std::shared_ptr<cache::MarketCache> market_cache);
+
+void setup_live_routes(http::Server& server) {
+    // Subscribe to symbols
+    server.Post("/api/live/subscribe", [](const http::Request& req, http::Response& res) {
+        res.set_json(handle_live_subscribe(req.body));
+    });
+    
+    // Unsubscribe from symbols
+    server.Post("/api/live/unsubscribe", [](const http::Request& req, http::Response& res) {
+        res.set_json(handle_live_unsubscribe(req.body));
+    });
+    
+    // Subscribe to option chain
+    server.Post("/api/live/subscribe/option-chain", [](const http::Request& req, http::Response& res) {
+        res.set_json(handle_live_subscribe_option_chain(req.body));
+    });
+    
+    // Unsubscribe from option chain
+    server.Post("/api/live/unsubscribe/option-chain", [](const http::Request& req, http::Response& res) {
+        res.set_json(handle_live_unsubscribe_option_chain(req.body));
+    });
+    
+    // Get current subscriptions
+    server.Get("/api/live/subscriptions", [](const http::Request&, http::Response& res) {
+        res.set_json(handle_live_get_subscriptions());
+    });
+    
+    // Get stats
+    server.Get("/api/live/stats", [](const http::Request&, http::Response& res) {
+        res.set_json(handle_live_get_stats());
+    });
+    
+    // Add credentials
+    server.Post("/api/live/credentials", [](const http::Request& req, http::Response& res) {
+        res.set_json(handle_live_add_credentials(req.body));
+    });
+    
+    // Start live streaming
+    server.Post("/api/live/start", [](const http::Request&, http::Response& res) {
+        res.set_json(handle_live_start());
+    });
+    
+    // Stop live streaming
+    server.Post("/api/live/stop", [](const http::Request&, http::Response& res) {
+        res.set_json(handle_live_stop());
+    });
+    
+    // Replace subscriptions (efficient switch between chains)
+    server.Post("/api/live/replace", [](const http::Request& req, http::Response& res) {
+        res.set_json(handle_live_replace_subscriptions(req.body));
+    });
+}
+
 void start_rest_server(int port) {
     http::Server server;
     server.enable_cors();
@@ -649,9 +885,30 @@ void start_rest_server(int port) {
     // Add replay routes
     setup_replay_routes(server);
     
+    // Initialize and add live routes
+    {
+        // Get the global instrument manager
+        auto& mgr = core::get_instrument_manager();
+        if (mgr.empty()) {
+            std::cout << "Loading instruments from ClickHouse/Kite..." << std::endl;
+            mgr.load_with_fallback();
+        }
+        
+        // Create shared_ptr that points to the global instance (don't own it)
+        // Note: This works because the global instance outlives the server
+        auto* mgr_ptr = &mgr;
+        auto instrument_manager = std::shared_ptr<core::InstrumentManager>(
+            mgr_ptr, [](core::InstrumentManager*) { /* no-op deleter */ });
+        
+        auto market_cache = std::make_shared<cache::MarketCache>();
+        init_live_data_service(instrument_manager, market_cache);
+        setup_live_routes(server);
+    }
+    
     std::cout << "Starting REST API server on port " << port << std::endl;
     std::cout << "Screener endpoints available at /api/screener/*" << std::endl;
     std::cout << "Replay endpoints available at /api/replay/*" << std::endl;
+    std::cout << "Live endpoints available at /api/live/*" << std::endl;
     server.listen("0.0.0.0", port);
 }
 

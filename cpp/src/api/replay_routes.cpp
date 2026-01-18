@@ -101,7 +101,8 @@ std::string json_get_string(const std::string& json, const std::string& key) {
     if (pos == std::string::npos) return "";
     
     pos += search.length();
-    while (pos < json.length() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+    // Skip all whitespace including newlines
+    while (pos < json.length() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r')) pos++;
     
     if (pos >= json.length() || json[pos] != '"') return "";
     pos++;
@@ -118,9 +119,10 @@ double json_get_double(const std::string& json, const std::string& key) {
     if (pos == std::string::npos) return 0.0;
     
     pos += search.length();
-    while (pos < json.length() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+    // Skip all whitespace including newlines
+    while (pos < json.length() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r')) pos++;
     
-    auto end = json.find_first_of(",}]", pos);
+    auto end = json.find_first_of(",}] \t\n\r", pos);
     if (end == std::string::npos) return 0.0;
     
     return parse_double(json.substr(pos, end - pos));
@@ -132,9 +134,10 @@ int64_t json_get_int64(const std::string& json, const std::string& key) {
     if (pos == std::string::npos) return 0;
     
     pos += search.length();
-    while (pos < json.length() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+    // Skip all whitespace including newlines
+    while (pos < json.length() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r')) pos++;
     
-    auto end = json.find_first_of(",}]", pos);
+    auto end = json.find_first_of(",}] \t\n\r", pos);
     if (end == std::string::npos) return 0;
     
     return parse_timestamp(json.substr(pos, end - pos));

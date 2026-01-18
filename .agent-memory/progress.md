@@ -2,11 +2,37 @@
 
 ## Current Status: ✅ BACKEND COMPLETE | 🚧 FRONTEND IN PROGRESS
 
-### LATEST UPDATE - January 18, 2026 (Session 3)
+### LATEST UPDATE - January 18, 2026 (Session 4)
 
-**Session Goal:** Implement Production-Grade Frontend (Next.js 14 + React 18)
+**Session Goal:** Fix replay page error "start_timestamp and end_timestamp required"
 
-## FRONTEND IMPLEMENTATION 🚧
+## FIX APPLIED ✅
+
+### Issue
+The replay page was getting error "start_timestamp and end_timestamp required" from the backend.
+
+### Root Cause
+The C++ backend JSON parser functions (`json_get_int64`, `json_get_double`, `json_get_string`) only skipped spaces and tabs after the colon in JSON keys, but NOT newlines or carriage returns.
+
+When JSON.stringify on the frontend produced formatted JSON with newlines, the parser couldn't find the values.
+
+### Solution
+Updated the three JSON parsing functions in `cpp/src/api/replay_routes.cpp` to handle all whitespace:
+- `json_get_string` - skip `\n` and `\r` after colon
+- `json_get_double` - skip `\n` and `\r` after colon, terminate at whitespace
+- `json_get_int64` - skip `\n` and `\r` after colon, terminate at whitespace
+
+### Files Modified
+1. `cpp/src/api/replay_routes.cpp` - Fixed whitespace handling in JSON parsers
+2. `cpp/src/kite/subscription_manager.cpp` - Added `#include <map>` (unrelated fix for compilation)
+
+### Verification
+- API test returned HTTP 200 OK with valid snapshots data
+- Timestamps parsed correctly: 1737100000000, 1737200000000
+
+---
+
+## PREVIOUS: FRONTEND IMPLEMENTATION 🚧
 
 ### Tech Stack
 - Next.js 14 (App Router)

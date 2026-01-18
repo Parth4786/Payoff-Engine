@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { X, RefreshCw } from 'lucide-react';
 import { useLatestTimestamp, useOptionChain } from '@/hooks';
-import { formatCurrency, formatNumber, cn } from '@/lib/utils';
+import { formatCurrency, formatGreek, formatNumber, cn } from '@/lib/utils';
 import type { InstrumentSnapshot, OptionChainStrike } from '@/lib/types';
 
 interface Props {
@@ -18,6 +18,30 @@ export function OptionChainModal({ instrument, onClose }: Props) {
     instrument.expiry_ms,
     latestTimestamp
   );
+
+  const renderGreekValue = (
+    value: number | undefined,
+    type: 'delta' | 'gamma' | 'theta' | 'vega'
+  ) => {
+    if (value === undefined || Number.isNaN(value)) return '-';
+    return formatGreek(value, type);
+  };
+
+  const renderGreeks = (snap?: InstrumentSnapshot) => {
+    if (!snap) {
+      return <span className="text-foreground-muted">-</span>;
+    }
+
+    return (
+      <div className="flex flex-col gap-0.5 text-[10px] leading-tight font-mono">
+        <span>D:{renderGreekValue(snap.delta, 'delta')}</span>
+        <span>G:{renderGreekValue(snap.gamma, 'gamma')}</span>
+        <span>T:{renderGreekValue(snap.theta, 'theta')}</span>
+        <span>V:{renderGreekValue(snap.vega, 'vega')}</span>
+        <span className="text-foreground-muted">Tok:{snap.instrument_id}</span>
+      </div>
+    );
+  };
 
   // Close on escape
   useEffect(() => {
@@ -78,13 +102,13 @@ export function OptionChainModal({ instrument, onClose }: Props) {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-background-secondary z-10">
                 <tr>
-                  <th colSpan={5} className="px-3 py-2 text-center text-profit border-b border-r border-border">
+                  <th colSpan={6} className="px-3 py-2 text-center text-profit border-b border-r border-border">
                     CALLS
                   </th>
                   <th className="px-3 py-2 text-center border-b border-border bg-background-tertiary">
                     Strike
                   </th>
-                  <th colSpan={5} className="px-3 py-2 text-center text-loss border-b border-l border-border">
+                  <th colSpan={6} className="px-3 py-2 text-center text-loss border-b border-l border-border">
                     PUTS
                   </th>
                 </tr>
@@ -93,9 +117,11 @@ export function OptionChainModal({ instrument, onClose }: Props) {
                   <th className="px-2 py-1 text-right border-b border-border">Volume</th>
                   <th className="px-2 py-1 text-right border-b border-border">IV</th>
                   <th className="px-2 py-1 text-right border-b border-border">LTP</th>
-                  <th className="px-2 py-1 text-right border-b border-r border-border">Chg%</th>
+                  <th className="px-2 py-1 text-right border-b border-border">Chg%</th>
+                  <th className="px-2 py-1 text-left border-b border-r border-border">Greeks</th>
                   <th className="px-2 py-1 text-center border-b border-border bg-background-tertiary"></th>
-                  <th className="px-2 py-1 text-right border-b border-l border-border">Chg%</th>
+                  <th className="px-2 py-1 text-left border-b border-l border-border">Greeks</th>
+                  <th className="px-2 py-1 text-right border-b border-border">Chg%</th>
                   <th className="px-2 py-1 text-right border-b border-border">LTP</th>
                   <th className="px-2 py-1 text-right border-b border-border">IV</th>
                   <th className="px-2 py-1 text-right border-b border-border">Volume</th>
@@ -133,12 +159,16 @@ export function OptionChainModal({ instrument, onClose }: Props) {
                         {strike.call ? formatCurrency(strike.call.last_price) : '-'}
                       </td>
                       {/* Call Change (OI Change) */}
-                      <td className={cn('px-2 py-1.5 text-right font-mono border-r border-border', isITMCall && 'bg-profit/5')}>
+                      <td className={cn('px-2 py-1.5 text-right font-mono', isITMCall && 'bg-profit/5')}>
                         {strike.call ? (
                           <span className={strike.call.oi_change >= 0 ? 'text-profit' : 'text-loss'}>
                             {strike.call.oi_change >= 0 ? '+' : ''}{formatNumber(strike.call.oi_change / 1000, 1)}K
                           </span>
                         ) : '-'}
+                      </td>
+                      {/* Call Greeks + Token */}
+                      <td className={cn('px-2 py-1.5 text-left border-r border-border', isITMCall && 'bg-profit/5')}>
+                        {renderGreeks(strike.call)}
                       </td>
 
                       {/* Strike */}
@@ -147,8 +177,12 @@ export function OptionChainModal({ instrument, onClose }: Props) {
                         {isATM && <span className="ml-1 text-xs">ATM</span>}
                       </td>
 
+                      {/* Put Greeks + Token */}
+                      <td className={cn('px-2 py-1.5 text-left border-l border-border', isITMPut && 'bg-loss/5')}>
+                        {renderGreeks(strike.put)}
+                      </td>
                       {/* Put Change (OI Change) */}
-                      <td className={cn('px-2 py-1.5 text-right font-mono border-l border-border', isITMPut && 'bg-loss/5')}>
+                      <td className={cn('px-2 py-1.5 text-right font-mono', isITMPut && 'bg-loss/5')}>
                         {strike.put ? (
                           <span className={strike.put.oi_change >= 0 ? 'text-profit' : 'text-loss'}>
                             {strike.put.oi_change >= 0 ? '+' : ''}{formatNumber(strike.put.oi_change / 1000, 1)}K

@@ -90,6 +90,7 @@ add_library(payoff_core STATIC
     # Kite API client
     src/kite/kite_client.cpp
     src/kite/kite_websocket.cpp
+    src/kite/subscription_manager.cpp
     
     # Streaming pipeline
     src/streaming/assembler.cpp
@@ -141,6 +142,7 @@ add_library(payoff_api STATIC
     src/api/screener_websocket.cpp
     src/api/replay_service.cpp
     src/api/replay_routes.cpp
+    src/api/live_routes.cpp
     
     # Screener service
     src/screener/screener_service.cpp
