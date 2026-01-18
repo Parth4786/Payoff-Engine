@@ -2,6 +2,14 @@
 
 Build a desk-grade, risk-first options strategy and analytics console that surpasses Sensibull/Opstra with curvature visualization, kill-zone warnings, and real-time WebSocket integration.
 
+**PRIMARY FOCUS: Historical Replay with No-Lookahead Simulation**
+
+The core differentiator is **deterministic replay mode** where:
+1. At timestamp T, you only see data available up to T (no future data)
+2. You see predicted payoff/Greeks at T
+3. As time advances to T+N, actual data becomes visible
+4. Compare predicted vs actual to find insights and improve decision-making
+
 ---
 
 ## Tech Stack Decision: Next.js 14 + React 18
@@ -98,6 +106,7 @@ Build a desk-grade, risk-first options strategy and analytics console that surpa
 | WebSocket features | `feature_snapshot` | Microprice, imbalance, OFI |
 | WebSocket strategy | `strategy_update` | Live P&L updates |
 | Execution hints | `execution_hint` | PASSIVE/AGGRESSIVE/WAIT posture |
+| Replay engine | `PayoffReplayEngine` (C++) | Strategy backtesting with payoff snapshots |
 
 ### ⚠️ Planned but Need Frontend-Side Logic
 
@@ -121,6 +130,272 @@ Build a desk-grade, risk-first options strategy and analytics console that surpa
 
 ---
 
+## 🔴 NEW BACKEND ENDPOINTS NEEDED FOR REPLAY MODE
+
+These endpoints are **required** to enable the prediction-vs-reality comparison feature:
+
+### 1. Strategy Replay with Payoff Snapshots
+
+```
+POST /api/replay/strategy
+```
+
+**Purpose:** Run strategy through historical data, get payoff at each timestamp
+
+**Request:**
+```json
+{
+  "strategy": {
+    "underlying": "NIFTY",
+    "legs": [
+      {"type": "CE", "side": "BUY", "strike": 26300, "qty": 1, "lot": 25, "premium": 250}
+    ]
+  },
+  "start_timestamp": 1767518400000,
+  "end_timestamp": 1767604800000,
+  "interval_ms": 60000,
+  "include_greeks": true
+}
+```
+
+**Response:**
+```json
+{
+  "snapshots": [
+    {
+      "timestamp": 1767518400000,
+      "underlying_price": 26280,
+      "total_pnl": -2500,
+      "greeks": {"delta": 0.52, "gamma": 0.0012, "theta": -15.25, "vega": 42.50},
+      "leg_prices": [{"strike": 26300, "price": 250, "iv": 0.15}]
+    },
+    {
+      "timestamp": 1767518460000,
+      "underlying_price": 26320,
+      "total_pnl": -1800,
+      "greeks": {"delta": 0.55, "gamma": 0.0011, "theta": -14.80, "vega": 41.20}
+    }
+  ],
+  "summary": {
+    "initial_pnl": -2500,
+    "final_pnl": +3200,
+    "max_pnl": +5000,
+    "min_pnl": -3100,
+    "pnl_std_dev": 1250
+  }
+}
+```
+
+### 2. Prediction Snapshot at Historical Time
+
+```
+POST /api/replay/prediction
+```
+
+**Purpose:** Get what the predicted payoff LOOKED LIKE at time T (using only data available at T)
+
+**Request:**
+```json
+{
+  "strategy": {...},
+  "as_of_timestamp": 1767518400000,
+  "prediction_horizons": [
+    {"days_forward": 1},
+    {"days_forward": 3},
+    {"days_forward": 7, "iv_shift_pct": -2}
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "as_of_timestamp": 1767518400000,
+  "market_state_at_time": {
+    "underlying_price": 26280,
+    "atm_iv": 0.152,
+    "days_to_expiry": 12
+  },
+  "predictions": [
+    {
+      "horizon": {"days_forward": 1},
+      "predicted_payoff": [
+        {"spot": 26000, "pnl": -2500},
+        {"spot": 26300, "pnl": -1200},
+        {"spot": 26500, "pnl": +2800}
+      ],
+      "predicted_greeks": {"delta": 0.48, "gamma": 0.0015}
+    }
+  ]
+}
+```
+
+### 3. Prediction vs Reality Comparison
+
+```
+POST /api/replay/compare
+```
+
+**Purpose:** Compare what was predicted at T with what actually happened at T+N
+
+**Request:**
+```json
+{
+  "strategy": {...},
+  "prediction_timestamp": 1767518400000,
+  "actual_timestamp": 1767604800000,
+  "comparison_points": [26000, 26200, 26300, 26400, 26500]
+}
+```
+
+**Response:**
+```json
+{
+  "prediction_timestamp": 1767518400000,
+  "actual_timestamp": 1767604800000,
+  "time_elapsed_hours": 24,
+  
+  "at_prediction_time": {
+    "underlying_price": 26280,
+    "predicted_pnl_at_current_spot": -2500,
+    "predicted_breakeven": 26400
+  },
+  
+  "at_actual_time": {
+    "underlying_price": 26450,
+    "actual_pnl": +3800,
+    "actual_breakeven": 26380
+  },
+  
+  "deviation": {
+    "pnl_deviation": +1300,
+    "pnl_deviation_pct": 52,
+    "breakeven_shift": -20,
+    "iv_change": -0.018,
+    "delta_drift": +0.08,
+    "prediction_accuracy_score": 0.78
+  },
+  
+  "insights": [
+    "Actual profit exceeded prediction by ₹1,300 (+52%)",
+    "IV dropped 1.8%, reducing Vega P&L contribution",
+    "Spot moved +170, Delta gains dominated"
+  ]
+}
+```
+
+### 4. Replay Session Management
+
+```
+POST /api/replay/session/create
+GET  /api/replay/session/{id}/state
+POST /api/replay/session/{id}/step
+POST /api/replay/session/{id}/seek
+DELETE /api/replay/session/{id}
+```
+
+**Purpose:** Persistent replay session that can be paused, stepped, seeked
+
+**Create Session:**
+```json
+{
+  "strategy": {...},
+  "start_timestamp": 1767518400000,
+  "end_timestamp": 1767604800000,
+  "speed": 1.0,
+  "auto_calculate_payoff": true,
+  "payoff_interval_ms": 60000
+}
+```
+
+**Step Response:**
+```json
+{
+  "session_id": "replay-abc123",
+  "current_timestamp": 1767518460000,
+  "progress_pct": 0.02,
+  "market_state": {
+    "underlying_price": 26290,
+    "quotes": {...}
+  },
+  "payoff_snapshot": {
+    "total_pnl": -2300,
+    "greeks": {...}
+  },
+  "has_more": true
+}
+```
+
+### 5. Historical Event Markers
+
+```
+GET /api/replay/events
+```
+
+**Purpose:** Get significant market events in time range for annotation
+
+**Request:**
+```
+GET /api/replay/events?start=1767518400000&end=1767604800000&underlying=NIFTY
+```
+
+**Response:**
+```json
+{
+  "events": [
+    {
+      "timestamp": 1767520000000,
+      "type": "IV_SPIKE",
+      "description": "ATM IV jumped 3% in 5 minutes",
+      "magnitude": 0.03
+    },
+    {
+      "timestamp": 1767525600000,
+      "type": "PRICE_GAP",
+      "description": "NIFTY gapped down 0.8% at open",
+      "magnitude": -0.008
+    },
+    {
+      "timestamp": 1767560000000,
+      "type": "OI_BUILDUP",
+      "description": "26300 CE saw 500K OI addition",
+      "strike": 26300,
+      "option_type": "CE"
+    }
+  ]
+}
+```
+
+### 6. Batch Historical Payoff Points
+
+```
+POST /api/payoff/historical-batch
+```
+
+**Purpose:** Calculate payoff at multiple historical timestamps efficiently
+
+**Request:**
+```json
+{
+  "strategy": {...},
+  "timestamps": [1767518400000, 1767521600000, 1767524800000],
+  "include_greeks": true
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {"timestamp": 1767518400000, "pnl": -2500, "greeks": {...}},
+    {"timestamp": 1767521600000, "pnl": -1200, "greeks": {...}},
+    {"timestamp": 1767524800000, "pnl": +800, "greeks": {...}}
+  ]
+}
+```
+
+---
+
 ## Steps
 
 1. **Scaffold Next.js 14+ project** with TypeScript strict mode, Tailwind CSS, shadcn/ui, Zustand for state, and TanStack Query for data fetching
@@ -134,6 +409,8 @@ Build a desk-grade, risk-first options strategy and analytics console that surpa
 5. **Develop Sensitivity Curvature Maps** with Delta/Gamma/Vega/Theta heatmaps, kill-zone highlighting
 
 6. **Implement Screener & Option Chain views** with virtualized tables, IV surface 3D, drag-to-strategy
+
+7. **BUILD REPLAY MODE** (PRIMARY FOCUS) with timeline scrubber, prediction-vs-reality overlay, deviation tracking
 
 ---
 
@@ -581,6 +858,131 @@ Build a desk-grade, risk-first options strategy and analytics console that surpa
 
 ---
 
+### 🔴 Page 9: REPLAY MODE (PRIMARY FOCUS)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│  ⚡ PAYOFF ENGINE          [Strategy] [Analyze] [Screener] [Risk] [Replay ●]   │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│  REPLAY: 2025-01-15 09:15:00 → 2025-01-15 15:30:00    Strategy: Bull Call Spread│
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌──────────────────────────────────────────────────────────────────────────┐  │
+│  │  TIMELINE SCRUBBER                                    Speed: [1x ▾]      │  │
+│  │  ══════════════════════════════════════════════════════════════════════  │  │
+│  │  09:15  09:45  10:15  10:45  11:15  11:45  12:15  14:30  15:00  15:30    │  │
+│  │    ●─────────────────────────────○─────────────────────────────────────● │  │
+│  │    ▲                             ▲                                        │  │
+│  │  Start                      CURRENT: 11:45                 End            │  │
+│  │                                                                           │  │
+│  │  [◀◀ -1m] [◀ -1t] [⏸ Pause] [▶ +1t] [▶▶ +1m]    [🔴 Record Insight]     │  │
+│  └──────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                 │
+│  ┌──────────────────────────────────┐  ┌─────────────────────────────────────┐ │
+│  │  MARKET STATE @ 11:45           │  │  WHAT YOU SAW @ 11:45 (No Future)   │ │
+│  │  ─────────────────────────────── │  │  ─────────────────────────────────── │ │
+│  │                                  │  │                                     │ │
+│  │  NIFTY Spot:     26,320         │  │  Your Prediction:                   │ │
+│  │  ATM IV:         14.8%          │  │  "If spot stays > 26,300 by EOD,    │ │
+│  │  DTE:            7 days         │  │   strategy will profit +₹3,000"     │ │
+│  │                                  │  │                                     │ │
+│  │  Your Strategy P&L: -₹1,200     │  │  Breakeven:       26,380            │ │
+│  │  Current Delta:      +0.48      │  │  Max Profit Zone: 26,500+           │ │
+│  │  Theta Burn/day:     -₹125      │  │  Kill Zone:       < 26,200          │ │
+│  │                                  │  │                                     │ │
+│  │  🟡 Profit probability: 58%      │  │  Greeks-based outlook:              │ │
+│  │                                  │  │  "Delta-positive, needs +80 move"   │ │
+│  └──────────────────────────────────┘  └─────────────────────────────────────┘ │
+│                                                                                 │
+│  ┌──────────────────────────────────────────────────────────────────────────┐  │
+│  │  PAYOFF @ 11:45 vs ACTUAL OUTCOME @ 15:30                                │  │
+│  │                                                                           │  │
+│  │  P&L                                                                      │  │
+│  │   ▲                      ┌─ What ACTUALLY happened                       │  │
+│  │   │                      │     (Spot ended @ 26,480)                     │  │
+│  │ +5k│              ┌─────────────────────                                 │  │
+│  │   │             ╱ │       ▼                                              │  │
+│  │   │           ╱   │   ★ Actual P&L: +₹4,200                              │  │
+│  │ +2k│         ╱    │                                                       │  │
+│  │   │        ╱      │   ─── Predicted payoff @ 11:45                       │  │
+│  │   │──────╱────────│   ─── Actual curve @ 15:30                           │  │
+│  │  0│     ╱│ BE: 26,380   ● Predicted P&L (if spot=26,480)                 │  │
+│  │   │    ╱ │             ★ Actual P&L                                      │  │
+│  │   │   ╱  │                                                               │  │
+│  │-2k│──╱   │        Prediction @ 11:45: +₹3,800 (if 26,480)               │  │
+│  │   │      │        Actual @ 15:30:     +₹4,200                            │  │
+│  │   └──────┴──────────────────────────────────────────────────► Spot       │  │
+│  │     25.5k  26k   26.4k  26.5k   27k                                      │  │
+│  │                    ▲                                                      │  │
+│  │              Spot @ 11:45                                                │  │
+│  └──────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                 │
+│  ┌──────────────────────────────────────────────────────────────────────────┐  │
+│  │  DEVIATION ANALYSIS                                                       │  │
+│  │                                                                           │  │
+│  │  ┌─────────────────────┬─────────────────┬─────────────────┬───────────┐ │  │
+│  │  │ Metric              │ @ 11:45 (Pred)  │ @ 15:30 (Actual)│ Deviation │ │  │
+│  │  ├─────────────────────┼─────────────────┼─────────────────┼───────────┤ │  │
+│  │  │ P&L                 │      +₹3,800    │      +₹4,200    │  +₹400 ✅ │ │  │
+│  │  │ Delta               │       +0.48     │       +0.35     │  -0.13    │ │  │
+│  │  │ IV                  │       14.8%     │       13.2%     │  -1.6% 📉 │ │  │
+│  │  │ Breakeven           │      26,380     │      26,340     │  -40 ✅   │ │  │
+│  │  │ Time Value Lost     │         —       │       -₹580     │  (Theta)  │ │  │
+│  │  └─────────────────────┴─────────────────┴─────────────────┴───────────┘ │  │
+│  │                                                                           │  │
+│  │  📊 INSIGHT: Prediction was conservative by ₹400 (+10.5%)                 │  │
+│  │  • IV dropped 1.6% → Vega loss of ~₹420 (partially offset gains)         │  │
+│  │  • Delta drift from 0.48 to 0.35 as option moved ITM                     │  │
+│  │  • Theta cost ₹580 over 3.75 hours, but Delta gains dominated            │  │
+│  │                                                                           │  │
+│  └──────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                 │
+│  ┌──────────────────────────────────────────────────────────────────────────┐  │
+│  │  MARKET EVENTS IN REPLAY WINDOW                                          │  │
+│  │                                                                           │  │
+│  │  11:52  🔵 OI_BUILDUP    26300 CE saw +120K OI                           │  │
+│  │  12:15  🟠 IV_SPIKE      ATM IV jumped 0.8% in 2 min                     │  │
+│  │  14:45  🔴 PRICE_GAP     NIFTY jumped +80 after news                     │  │
+│  │  15:10  🔵 OI_UNWIND     26400 PE saw -200K OI                           │  │
+│  │                                                                           │  │
+│  │  [Filter: All ▾]  [Export Timeline]                                       │  │
+│  └──────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                 │
+│  ┌─────────────────────────────────┐  ┌──────────────────────────────────────┐ │
+│  │  RECORDED INSIGHTS (This Run)   │  │  REPLAY SETTINGS                     │ │
+│  │                                  │  │                                      │ │
+│  │  💡 11:52 - "OI buildup bullish" │  │  Start: [2025-01-15 09:15 ▾]        │ │
+│  │  💡 14:45 - "News catalyst!"     │  │  End:   [2025-01-15 15:30 ▾]        │ │
+│  │                                  │  │  Interval: [1 minute ▾]             │ │
+│  │  [+ Add Insight]                │  │  [Load Session] [Save Session]       │ │
+│  │                                  │  │                                      │ │
+│  └──────────────────────────────────┘  └──────────────────────────────────────┘ │
+│                                                                                 │
+│  [📤 Export Replay Report]  [🔄 Reset to Start]  [📊 Compare Multiple Runs]    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Components:**
+- `TimelineScrubber` — Drag/seek through time, play/pause/step controls
+- `MarketStatePanel` — Spot, IV, DTE, current P&L at selected time
+- `PredictionPanel` — What you "would have seen" at time T (no lookahead)
+- `PayoffComparisonChart` — Overlay predicted vs actual payoff curves
+- `DeviationTable` — Side-by-side comparison of all metrics
+- `InsightPanel` — Auto-generated plain English explanations
+- `EventTimeline` — OI/IV/price events with markers
+- `InsightRecorder` — User can note observations during replay
+- `ReplaySettings` — Configure session, save/load replays
+
+**Backend:** NEW endpoints needed:
+- `POST /api/replay/strategy` — Get payoff snapshots over time
+- `POST /api/replay/prediction` — Payoff as-of historical time T
+- `POST /api/replay/compare` — Prediction vs actual deviation
+- `GET /api/replay/events` — Market events in time range
+- `POST /api/replay/session/*` — Session management
+
+---
+
 ## Component Architecture
 
 ```
@@ -597,7 +999,10 @@ frontend/
 │   │   │   ├── chain/            # Option Chain
 │   │   │   └── iv-surface/       # IV Surface 3D
 │   │   ├── risk/page.tsx         # Risk Decomposition
-│   │   └── live/page.tsx         # Live Monitor
+│   │   ├── live/page.tsx         # Live Monitor
+│   │   └── replay/               # 🔴 PRIMARY FOCUS
+│   │       ├── page.tsx          # Replay Mode Main
+│   │       └── [sessionId]/      # Saved replay sessions
 │   ├── layout.tsx
 │   └── providers.tsx
 ├── components/
@@ -628,6 +1033,17 @@ frontend/
 │   │   ├── ExecutionHints.tsx
 │   │   ├── DepthVisualization.tsx
 │   │   └── KillSwitch.tsx
+│   ├── replay/                   # 🔴 PRIMARY FOCUS - REPLAY COMPONENTS
+│   │   ├── TimelineScrubber.tsx      # Play/pause/seek/step controls
+│   │   ├── MarketStatePanel.tsx      # Current market snapshot at time T
+│   │   ├── PredictionPanel.tsx       # What you "saw" at time T (no future)
+│   │   ├── PayoffComparisonChart.tsx # Overlay predicted vs actual curves
+│   │   ├── DeviationTable.tsx        # Side-by-side metric comparison
+│   │   ├── InsightPanel.tsx          # Auto-generated explanations
+│   │   ├── EventTimeline.tsx         # OI/IV/price event markers
+│   │   ├── InsightRecorder.tsx       # User note-taking during replay
+│   │   ├── ReplaySettings.tsx        # Session config, save/load
+│   │   └── PnLEvolutionChart.tsx     # P&L over time with annotations
 │   └── shared/
 │       ├── GreeksDisplay.tsx
 │       ├── QuoteCard.tsx
@@ -638,7 +1054,8 @@ frontend/
 │   │   ├── client.ts
 │   │   ├── payoff.ts
 │   │   ├── greeks.ts
-│   │   └── screener.ts
+│   │   ├── screener.ts
+│   │   └── replay.ts             # 🔴 NEW - Replay API client
 │   ├── websocket/
 │   │   ├── manager.ts
 │   │   ├── handlers.ts
@@ -646,17 +1063,21 @@ frontend/
 │   ├── store/
 │   │   ├── strategy.ts
 │   │   ├── market.ts
-│   │   └── ui.ts
+│   │   ├── ui.ts
+│   │   └── replay.ts             # 🔴 NEW - Replay session state
 │   └── types/
 │       ├── api.ts
 │       ├── models.ts
-│       └── websocket.ts
+│       ├── websocket.ts
+│       └── replay.ts             # 🔴 NEW - Replay types
 └── hooks/
     ├── useStrategy.ts
     ├── usePayoff.ts
     ├── useWebSocket.ts
     ├── useScreener.ts
-    └── useThrottle.ts
+    ├── useThrottle.ts
+    ├── useReplay.ts              # 🔴 NEW - Replay controls hook
+    └── useReplayComparison.ts    # 🔴 NEW - Prediction vs actual hook
 ```
 
 ---
@@ -769,6 +1190,126 @@ interface SensitivitySurface {
     spot: number;
     values: Array<{ days: number; value: number }>;
   }>;
+}
+
+// 🔴 REPLAY MODE TYPES (PRIMARY FOCUS)
+
+interface ReplayConfig {
+  strategy: Strategy;
+  start_timestamp: number;
+  end_timestamp: number;
+  interval_ms: number;
+  include_greeks: boolean;
+}
+
+interface ReplaySnapshot {
+  timestamp: number;
+  underlying_price: number;
+  total_pnl: number;
+  greeks: Greeks;
+  leg_prices: Array<{
+    strike: number;
+    price: number;
+    iv: number;
+  }>;
+}
+
+interface ReplaySummary {
+  initial_pnl: number;
+  final_pnl: number;
+  max_pnl: number;
+  min_pnl: number;
+  pnl_std_dev: number;
+}
+
+interface ReplayStrategyResponse {
+  snapshots: ReplaySnapshot[];
+  summary: ReplaySummary;
+}
+
+interface PredictionHorizon {
+  days_forward: number;
+  iv_shift_pct?: number;
+}
+
+interface PredictedPayoff {
+  horizon: PredictionHorizon;
+  predicted_payoff: PayoffPoint[];
+  predicted_greeks: Greeks;
+}
+
+interface PredictionSnapshotResponse {
+  as_of_timestamp: number;
+  market_state_at_time: {
+    underlying_price: number;
+    atm_iv: number;
+    days_to_expiry: number;
+  };
+  predictions: PredictedPayoff[];
+}
+
+interface DeviationMetrics {
+  pnl_deviation: number;
+  pnl_deviation_pct: number;
+  breakeven_shift: number;
+  iv_change: number;
+  delta_drift: number;
+  prediction_accuracy_score: number;
+}
+
+interface ComparisonResponse {
+  prediction_timestamp: number;
+  actual_timestamp: number;
+  time_elapsed_hours: number;
+  
+  at_prediction_time: {
+    underlying_price: number;
+    predicted_pnl_at_current_spot: number;
+    predicted_breakeven: number;
+  };
+  
+  at_actual_time: {
+    underlying_price: number;
+    actual_pnl: number;
+    actual_breakeven: number;
+  };
+  
+  deviation: DeviationMetrics;
+  insights: string[];
+}
+
+type MarketEventType = 'IV_SPIKE' | 'PRICE_GAP' | 'OI_BUILDUP' | 'OI_UNWIND' | 'VOLUME_SPIKE';
+
+interface MarketEvent {
+  timestamp: number;
+  type: MarketEventType;
+  description: string;
+  magnitude: number;
+  strike?: number;
+  option_type?: 'CE' | 'PE';
+}
+
+interface ReplaySession {
+  session_id: string;
+  config: ReplayConfig;
+  current_timestamp: number;
+  progress_pct: number;
+  market_state: {
+    underlying_price: number;
+    quotes: Record<string, number>;
+  };
+  payoff_snapshot: {
+    total_pnl: number;
+    greeks: Greeks;
+  };
+  has_more: boolean;
+}
+
+interface RecordedInsight {
+  id: string;
+  timestamp: number;
+  text: string;
+  tags?: string[];
 }
 ```
 
