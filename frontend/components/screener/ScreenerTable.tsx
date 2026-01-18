@@ -9,10 +9,10 @@ import type { InstrumentSnapshot } from '@/lib/types';
 interface Props {
   instruments: InstrumentSnapshot[];
   isLoading: boolean;
-  onSelectSymbol: (symbol: string) => void;
+  onSelectInstrument: (instrument: InstrumentSnapshot) => void;
 }
 
-export function ScreenerTable({ instruments, isLoading, onSelectSymbol }: Props) {
+export function ScreenerTable({ instruments, isLoading, onSelectInstrument }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
 
   const rowVirtualizer = useVirtualizer({
@@ -171,7 +171,7 @@ export function ScreenerTable({ instruments, isLoading, onSelectSymbol }: Props)
                 {/* Actions */}
                 <div className="px-2 py-2 shrink-0" style={{ width: columns[12].width }}>
                   <button
-                    onClick={() => onSelectSymbol(instrument.tradingsymbol)}
+                    onClick={() => onSelectInstrument(instrument)}
                     className="p-1 rounded hover:bg-background-tertiary text-foreground-muted hover:text-foreground transition-colors"
                   >
                     <ChevronRight className="w-4 h-4" />

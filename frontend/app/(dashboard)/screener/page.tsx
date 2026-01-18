@@ -8,12 +8,14 @@ import { IVSurface3D } from '@/components/screener/IVSurface3D';
 import { OptionChainModal } from '@/components/screener/OptionChainModal';
 import { useScreener } from '@/hooks';
 import { Filter, Grid3X3, Table2 } from 'lucide-react';
+import type { InstrumentSnapshot } from '@/lib/types';
 
 export default function ScreenerPage() {
   const {
     instruments,
     filters,
     isLoading,
+    underlyings,
     totalCount,
     currentPage,
     totalPages,
@@ -29,7 +31,7 @@ export default function ScreenerPage() {
   
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [showFilters, setShowFilters] = useState(true);
-  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+  const [selectedInstrument, setSelectedInstrument] = useState<InstrumentSnapshot | null>(null);
 
   return (
     <div className="min-h-screen">
@@ -74,6 +76,7 @@ export default function ScreenerPage() {
             <ScreenerFilters
               filters={filters}
               onFiltersChange={updateFilters}
+              underlyings={underlyings.map((u) => u.symbol)}
             />
           </div>
         )}
@@ -85,7 +88,7 @@ export default function ScreenerPage() {
             <ScreenerTable
               instruments={instruments}
               isLoading={isLoading}
-              onSelectSymbol={setSelectedSymbol}
+              onSelectInstrument={setSelectedInstrument}
             />
           </div>
 
@@ -118,10 +121,10 @@ export default function ScreenerPage() {
       </div>
 
       {/* Option Chain Modal */}
-      {selectedSymbol && (
+      {selectedInstrument && (
         <OptionChainModal
-          symbol={selectedSymbol}
-          onClose={() => setSelectedSymbol(null)}
+          instrument={selectedInstrument}
+          onClose={() => setSelectedInstrument(null)}
         />
       )}
     </div>

@@ -58,7 +58,7 @@ public:
     ScreenerJsonBuilder& value(size_t v) { ss_ << v; return *this; }
     ScreenerJsonBuilder& value(bool v) { ss_ << (v ? "true" : "false"); return *this; }
     ScreenerJsonBuilder& null_value() { ss_ << "null"; return *this; }
-    ScreenerJsonBuilder& next() { first_ = false; return *this; }
+    ScreenerJsonBuilder& next() { ss_ << ","; first_ = false; return *this; }
     ScreenerJsonBuilder& raw(const std::string& s) { ss_ << s; return *this; }
     
     std::string str() const { return ss_.str(); }

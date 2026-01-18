@@ -2,16 +2,22 @@
 
 import { useEffect } from 'react';
 import { X, RefreshCw } from 'lucide-react';
-import { useOptionChain } from '@/hooks';
+import { useLatestTimestamp, useOptionChain } from '@/hooks';
 import { formatCurrency, formatNumber, cn } from '@/lib/utils';
+import type { InstrumentSnapshot, OptionChainStrike } from '@/lib/types';
 
 interface Props {
-  symbol: string;
+  instrument: InstrumentSnapshot;
   onClose: () => void;
 }
 
-export function OptionChainModal({ symbol, onClose }: Props) {
-  const { data: chainData, isLoading, refetch } = useOptionChain(symbol);
+export function OptionChainModal({ instrument, onClose }: Props) {
+  const { data: latestTimestamp } = useLatestTimestamp(7, 60);
+  const { data: chainData, isLoading, refetch } = useOptionChain(
+    instrument.underlying,
+    instrument.expiry_ms,
+    latestTimestamp
+  );
 
   // Close on escape
   useEffect(() => {
@@ -35,7 +41,7 @@ export function OptionChainModal({ symbol, onClose }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div>
-            <h2 className="text-lg font-semibold">{symbol} Option Chain</h2>
+            <h2 className="text-lg font-semibold">{instrument.underlying} Option Chain</h2>
             {chainData && (
               <p className="text-sm text-foreground-muted">
                 Spot: {formatNumber(chainData.spot, 2)} | Max Pain: {formatNumber(chainData.max_pain, 0)} | PCR: {chainData.pcr_oi.toFixed(2)}
@@ -97,7 +103,7 @@ export function OptionChainModal({ symbol, onClose }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {chainData.strikes.map((strike) => {
+                {chainData.strikes.map((strike: OptionChainStrike) => {
                   const isATM = strike.is_atm;
                   const isITMCall = chainData.spot > strike.strike;
                   const isITMPut = chainData.spot < strike.strike;

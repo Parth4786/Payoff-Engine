@@ -86,7 +86,7 @@ public:
     WSJsonBuilder& value(double v) { ss_ << v; return *this; }
     WSJsonBuilder& value(int64_t v) { ss_ << v; return *this; }
     WSJsonBuilder& value(bool v) { ss_ << (v ? "true" : "false"); return *this; }
-    WSJsonBuilder& next() { first_ = false; return *this; }
+    WSJsonBuilder& next() { ss_ << ","; first_ = false; return *this; }
     
     std::string str() const { return ss_.str(); }
     

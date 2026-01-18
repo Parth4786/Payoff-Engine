@@ -7,19 +7,22 @@ import { OptionChainPicker } from '@/components/strategy/OptionChainPicker';
 import { StrategySummary } from '@/components/strategy/StrategySummary';
 import { RiskWarnings } from '@/components/strategy/RiskWarnings';
 import { GreeksDisplay } from '@/components/shared';
-import { useStrategy } from '@/hooks';
+import { useStrategy, useUnderlyings } from '@/hooks';
 import { Calculator, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 
 export default function StrategyPage() {
   const {
     strategy,
+    setUnderlying,
     payoffResult,
     isCalculating,
     error,
     aggregateGreeks,
     calculatePayoff,
   } = useStrategy();
+
+  const { data: underlyings = [], isLoading: isLoadingUnderlyings } = useUnderlyings();
   
   const [spotPrice, setSpotPrice] = useState(26300);
 
@@ -55,6 +58,20 @@ export default function StrategyPage() {
                   Strategy Legs
                 </h2>
                 <div className="flex items-center gap-2">
+                  <label className="text-xs text-foreground-muted">Underlying:</label>
+                  <select
+                    value={strategy.underlying}
+                    onChange={(e) => setUnderlying(e.target.value)}
+                    disabled={isLoadingUnderlyings}
+                    className="px-2 py-1 text-sm bg-background-tertiary border border-border rounded focus:outline-none focus:ring-1 focus:ring-accent"
+                  >
+                    {underlyings.map((u) => (
+                      <option key={u.symbol} value={u.symbol}>
+                        {u.symbol}
+                      </option>
+                    ))}
+                  </select>
+
                   <label className="text-xs text-foreground-muted">Spot:</label>
                   <input
                     type="number"

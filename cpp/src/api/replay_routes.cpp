@@ -58,7 +58,7 @@ public:
     ReplayJsonBuilder& value(size_t v) { ss_ << v; return *this; }
     ReplayJsonBuilder& value(bool v) { ss_ << (v ? "true" : "false"); return *this; }
     ReplayJsonBuilder& null_value() { ss_ << "null"; return *this; }
-    ReplayJsonBuilder& next() { first_ = false; return *this; }
+    ReplayJsonBuilder& next() { ss_ << ","; first_ = false; return *this; }
     
     std::string str() const { return ss_.str(); }
     

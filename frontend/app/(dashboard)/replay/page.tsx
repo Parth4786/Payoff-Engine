@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Navbar } from '@/components/shared';
 import { TimelineScrubber } from '@/components/replay/TimelineScrubber';
 import { MarketStatePanel } from '@/components/replay/MarketStatePanel';
@@ -10,11 +10,12 @@ import { DeviationTable } from '@/components/replay/DeviationTable';
 import { EventTimeline } from '@/components/replay/EventTimeline';
 import { InsightRecorder } from '@/components/replay/InsightRecorder';
 import { ReplayControls } from '@/components/replay/ReplayControls';
-import { useReplay, useStrategy } from '@/hooks';
+import { useReplay, useStrategy, useUnderlyings } from '@/hooks';
 import { History, RotateCcw, Download } from 'lucide-react';
 
 export default function ReplayPage() {
-  const { strategy } = useStrategy();
+  const { strategy, setUnderlying } = useStrategy();
+  const { data: underlyings = [], isLoading: isLoadingUnderlyings } = useUnderlyings();
   const {
     sessionId,
     startTimestamp,
@@ -50,19 +51,31 @@ export default function ReplayPage() {
   const [showPrediction, setShowPrediction] = useState(true);
   const [compareMode, setCompareMode] = useState(false);
 
-  const handleInitReplay = async () => {
-    if (strategy.legs.length === 0) return;
-    
-    // Default: replay last 7 days
+  const defaultRange = useMemo(() => {
     const end = Date.now();
     const start = end - 7 * 24 * 60 * 60 * 1000;
-    
-    await storeInitReplay(
-      strategy,
-      start,
-      end,
-      5 * 60 * 1000 // 5-minute intervals
-    );
+    return { start, end };
+  }, []);
+
+  const toLocalDateTimeValue = (ms: number) => {
+    const d = new Date(ms);
+    const tzOffsetMs = d.getTimezoneOffset() * 60 * 1000;
+    return new Date(ms - tzOffsetMs).toISOString().slice(0, 16);
+  };
+
+  const [startValue, setStartValue] = useState(() => toLocalDateTimeValue(defaultRange.start));
+  const [endValue, setEndValue] = useState(() => toLocalDateTimeValue(defaultRange.end));
+  const [intervalMs, setIntervalMs] = useState<number>(5 * 60 * 1000);
+
+  const handleInitReplay = async () => {
+    if (strategy.legs.length === 0) return;
+
+    const start = new Date(startValue).getTime();
+    const end = new Date(endValue).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start <= 0 || end <= 0) return;
+    if (start >= end) return;
+
+    await storeInitReplay(strategy, start, end, intervalMs);
   };
 
   return (
@@ -110,12 +123,65 @@ export default function ReplayPage() {
               <p className="text-foreground-muted mb-6 max-w-md mx-auto">
                 Replay historical market data for your strategy. See how your P&L would have evolved and compare actual vs predicted outcomes.
               </p>
+
+              <div className="max-w-2xl mx-auto mb-6 text-left grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-foreground-muted block mb-1">Underlying</label>
+                  <select
+                    value={strategy.underlying}
+                    onChange={(e) => setUnderlying(e.target.value)}
+                    disabled={isLoadingUnderlyings}
+                    className="w-full px-3 py-2 text-sm bg-background-tertiary border border-border rounded-lg focus:outline-none focus:border-accent"
+                  >
+                    {underlyings.map((u) => (
+                      <option key={u.symbol} value={u.symbol}>
+                        {u.symbol}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs text-foreground-muted block mb-1">Interval</label>
+                  <select
+                    value={intervalMs}
+                    onChange={(e) => setIntervalMs(Number(e.target.value))}
+                    className="w-full px-3 py-2 text-sm bg-background-tertiary border border-border rounded-lg focus:outline-none focus:border-accent"
+                  >
+                    <option value={60_000}>1 minute</option>
+                    <option value={5 * 60_000}>5 minutes</option>
+                    <option value={15 * 60_000}>15 minutes</option>
+                    <option value={60 * 60_000}>1 hour</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs text-foreground-muted block mb-1">Start</label>
+                  <input
+                    type="datetime-local"
+                    value={startValue}
+                    onChange={(e) => setStartValue(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-background-tertiary border border-border rounded-lg focus:outline-none focus:border-accent"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs text-foreground-muted block mb-1">End</label>
+                  <input
+                    type="datetime-local"
+                    value={endValue}
+                    onChange={(e) => setEndValue(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-background-tertiary border border-border rounded-lg focus:outline-none focus:border-accent"
+                  />
+                </div>
+              </div>
+
               <button
                 onClick={handleInitReplay}
                 disabled={strategy.legs.length === 0}
                 className="px-6 py-3 bg-accent text-white rounded-lg font-medium hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {strategy.legs.length === 0 ? 'Build a Strategy First' : 'Start Replay (Last 7 Days)'}
+                {strategy.legs.length === 0 ? 'Build a Strategy First' : 'Start Replay'}
               </button>
               {error && (
                 <p className="mt-4 text-sm text-loss">{error}</p>

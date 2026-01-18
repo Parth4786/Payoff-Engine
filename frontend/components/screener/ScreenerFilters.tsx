@@ -8,9 +8,10 @@ import type { ScreenerFilters as FilterType } from '@/lib/types';
 interface Props {
   filters: FilterType;
   onFiltersChange: (filters: Partial<FilterType>) => void;
+  underlyings: string[];
 }
 
-export function ScreenerFilters({ filters, onFiltersChange }: Props) {
+export function ScreenerFilters({ filters, onFiltersChange, underlyings }: Props) {
   const [expandedSections, setExpandedSections] = useState<string[]>(['underlying', 'moneyness', 'greeks']);
 
   const toggleSection = (section: string) => {
@@ -34,8 +35,6 @@ export function ScreenerFilters({ filters, onFiltersChange }: Props) {
     });
   };
 
-  const underlyings = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY'];
-
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -57,6 +56,9 @@ export function ScreenerFilters({ filters, onFiltersChange }: Props) {
         onToggle={() => toggleSection('underlying')}
       >
         <div className="space-y-2">
+          {underlyings.length === 0 && (
+            <div className="text-sm text-foreground-muted">No underlyings available</div>
+          )}
           {underlyings.map((u) => (
             <label key={u} className="flex items-center gap-2 cursor-pointer">
               <input

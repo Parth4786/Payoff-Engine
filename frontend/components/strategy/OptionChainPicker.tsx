@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useOptionChain, useStrategy, useScreener } from '@/hooks';
+import { useLatestTimestamp, useOptionChain, useStrategy, useScreener } from '@/hooks';
 import { cn, formatCurrency, formatNumber } from '@/lib/utils';
 import { Plus, RefreshCw } from 'lucide-react';
 import type { OptionChainStrike, OptionType, Side } from '@/lib/types';
@@ -13,12 +13,14 @@ interface Props {
 export function OptionChainPicker({ spotPrice }: Props) {
   const { strategy, addLeg } = useStrategy();
   const { expiries } = useScreener();
+  const { data: latestTimestamp } = useLatestTimestamp(7, 60);
   const [selectedExpiry, setSelectedExpiry] = useState<number | undefined>();
   const effectiveExpiry = selectedExpiry ?? expiries[0]?.expiry_ms;
   
   const { data: chainData, isLoading, refetch } = useOptionChain(
     strategy.underlying,
-    effectiveExpiry
+    effectiveExpiry,
+    latestTimestamp
   );
 
   const handleAddLeg = (strike: number, type: OptionType, side: Side, premium: number) => {
@@ -36,7 +38,7 @@ export function OptionChainPicker({ spotPrice }: Props) {
   const visibleStrikes = useMemo(() => {
     if (!chainData?.strikes) return [];
     
-    const atmIndex = chainData.strikes.findIndex((s) => s.is_atm);
+    const atmIndex = chainData.strikes.findIndex((s: OptionChainStrike) => s.is_atm);
     const start = Math.max(0, atmIndex - 10);
     const end = Math.min(chainData.strikes.length, atmIndex + 11);
     
