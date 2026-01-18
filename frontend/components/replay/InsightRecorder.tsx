@@ -1,42 +1,48 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Save, Trash2, Lightbulb } from 'lucide-react';
+import { Plus, Save, Trash2, Lightbulb, Tag } from 'lucide-react';
 import { cn, formatNumber } from '@/lib/utils';
 import { useReplayStore } from '@/lib/store';
-import type { ReplaySnapshot, Insight } from '@/lib/types';
+import type { ReplaySnapshot, RecordedInsight } from '@/lib/types';
 
 interface Props {
   currentSnapshot: ReplaySnapshot | null;
 }
 
+const PRESET_TAGS = ['entry', 'exit', 'mistake', 'success', 'observation', 'question'];
+
 export function InsightRecorder({ currentSnapshot }: Props) {
   const { insights, addInsight, removeInsight } = useReplayStore();
   const [isAdding, setIsAdding] = useState(false);
   const [newNote, setNewNote] = useState('');
-  const [newType, setNewType] = useState<Insight['type']>('observation');
+  const [selectedTags, setSelectedTags] = useState<string[]>(['observation']);
 
   const handleAddInsight = () => {
     if (!currentSnapshot || !newNote.trim()) return;
 
-    addInsight({
-      id: Date.now().toString(),
-      timestamp: currentSnapshot.timestamp,
-      type: newType,
-      note: newNote.trim(),
-      spot: currentSnapshot.spot,
-      pnl: currentSnapshot.pnl,
-    });
-
+    addInsight(newNote.trim(), selectedTags);
     setNewNote('');
+    setSelectedTags(['observation']);
     setIsAdding(false);
   };
 
-  const typeConfig: Record<Insight['type'], { label: string; color: string }> = {
-    observation: { label: 'Observation', color: 'bg-blue-500/20 text-blue-400' },
-    mistake: { label: 'Mistake', color: 'bg-loss/20 text-loss' },
-    success: { label: 'Success', color: 'bg-profit/20 text-profit' },
-    question: { label: 'Question', color: 'bg-warning/20 text-warning' },
+  const toggleTag = (tag: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
+  };
+
+  const getTagColor = (tag: string) => {
+    const colors: Record<string, string> = {
+      entry: 'bg-blue-500/20 text-blue-400',
+      exit: 'bg-purple-500/20 text-purple-400',
+      mistake: 'bg-loss/20 text-loss',
+      success: 'bg-profit/20 text-profit',
+      observation: 'bg-info/20 text-info',
+      question: 'bg-warning/20 text-warning',
+    };
+    return colors[tag] || 'bg-foreground-muted/20 text-foreground-muted';
   };
 
   return (
@@ -53,19 +59,19 @@ export function InsightRecorder({ currentSnapshot }: Props) {
         </button>
       ) : (
         <div className="p-4 border border-border rounded-lg space-y-3">
-          <div className="flex items-center gap-2">
-            {(Object.keys(typeConfig) as Insight['type'][]).map((type) => (
+          <div className="flex items-center gap-2 flex-wrap">
+            {PRESET_TAGS.map((tag) => (
               <button
-                key={type}
-                onClick={() => setNewType(type)}
+                key={tag}
+                onClick={() => toggleTag(tag)}
                 className={cn(
-                  'px-3 py-1 rounded-full text-xs font-medium transition-colors',
-                  newType === type
-                    ? typeConfig[type].color
+                  'px-3 py-1 rounded-full text-xs font-medium transition-colors capitalize',
+                  selectedTags.includes(tag)
+                    ? getTagColor(tag)
                     : 'bg-background-tertiary text-foreground-muted hover:text-foreground'
                 )}
               >
-                {typeConfig[type].label}
+                {tag}
               </button>
             ))}
           </div>
@@ -81,7 +87,7 @@ export function InsightRecorder({ currentSnapshot }: Props) {
 
           <div className="flex items-center justify-between">
             <span className="text-xs text-foreground-muted">
-              At spot: {formatNumber(currentSnapshot?.spot || 0, 0)}
+              At spot: {formatNumber(currentSnapshot?.underlying_price || 0, 0)}
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -125,23 +131,26 @@ export function InsightRecorder({ currentSnapshot }: Props) {
                     <div className="flex items-start gap-2">
                       <Lightbulb className="w-4 h-4 text-warning mt-0.5 shrink-0" />
                       <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span
-                            className={cn(
-                              'px-2 py-0.5 rounded-full text-xs',
-                              typeConfig[insight.type].color
-                            )}
-                          >
-                            {typeConfig[insight.type].label}
-                          </span>
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          {insight.tags?.map((tag) => (
+                            <span
+                              key={tag}
+                              className={cn(
+                                'px-2 py-0.5 rounded-full text-xs capitalize',
+                                getTagColor(tag)
+                              )}
+                            >
+                              {tag}
+                            </span>
+                          ))}
                           <span className="text-xs text-foreground-muted">{time}</span>
-                          {insight.spot && (
+                          {insight.market_state?.spot && (
                             <span className="text-xs text-foreground-muted">
-                              @ {formatNumber(insight.spot, 0)}
+                              @ {formatNumber(insight.market_state.spot, 0)}
                             </span>
                           )}
                         </div>
-                        <p className="text-sm text-foreground-secondary">{insight.note}</p>
+                        <p className="text-sm text-foreground-secondary">{insight.text}</p>
                       </div>
                     </div>
                     <button

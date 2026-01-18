@@ -23,13 +23,12 @@ interface Props {
 }
 
 export function PayoffComparisonChart({ snapshots, currentIndex, comparison }: Props) {
+  // Get predicted P&L from comparison if available
+  const predictedPnl = comparison?.at_prediction_time.predicted_pnl_at_current_spot;
+
   // Prepare chart data
   const chartData = useMemo(() => {
     return snapshots.map((snap, index) => {
-      const compPoint = comparison?.points?.find(
-        (p) => Math.abs(p.timestamp - snap.timestamp) < 60000
-      );
-
       return {
         index,
         timestamp: snap.timestamp,
@@ -37,12 +36,12 @@ export function PayoffComparisonChart({ snapshots, currentIndex, comparison }: P
           hour: '2-digit',
           minute: '2-digit',
         }),
-        pnl: snap.pnl || 0,
-        predictedPnl: compPoint?.predicted_pnl,
-        spot: snap.spot,
+        pnl: snap.total_pnl || 0,
+        predictedPnl: comparison ? predictedPnl : undefined,
+        spot: snap.underlying_price,
       };
     });
-  }, [snapshots, comparison]);
+  }, [snapshots, comparison, predictedPnl]);
 
   const formatTime = (time: string) => time;
 

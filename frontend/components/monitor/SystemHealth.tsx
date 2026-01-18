@@ -44,7 +44,7 @@ export function SystemHealth({ isConnected }: Props) {
             healthy: { color: 'text-profit', bg: 'bg-profit/10' },
             warning: { color: 'text-warning', bg: 'bg-warning/10' },
             error: { color: 'text-loss', bg: 'bg-loss/10' },
-          }[check.status];
+          }[check.status] ?? { color: 'text-foreground-muted', bg: 'bg-background-tertiary' };
 
           return (
             <div key={check.name} className="flex items-center gap-2">

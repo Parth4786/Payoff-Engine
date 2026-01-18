@@ -94,17 +94,17 @@ export function ReplayControls({
         <div className="flex items-center gap-6 text-sm">
           <div className="flex items-center gap-2">
             <span className="text-foreground-muted">Spot:</span>
-            <span className="font-mono font-semibold">{formatNumber(currentSnapshot.spot, 2)}</span>
+            <span className="font-mono font-semibold">{formatNumber(currentSnapshot.underlying_price, 2)}</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-foreground-muted">P&L:</span>
             <span
               className={cn(
                 'font-mono font-semibold',
-                (currentSnapshot.pnl || 0) >= 0 ? 'text-profit' : 'text-loss'
+                (currentSnapshot.total_pnl || 0) >= 0 ? 'text-profit' : 'text-loss'
               )}
             >
-              {formatCurrency(currentSnapshot.pnl || 0)}
+              {formatCurrency(currentSnapshot.total_pnl || 0)}
             </span>
           </div>
         </div>

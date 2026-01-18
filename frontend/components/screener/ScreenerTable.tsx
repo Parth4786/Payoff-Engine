@@ -27,7 +27,7 @@ export function ScreenerTable({ instruments, isLoading, onSelectSymbol }: Props)
     { key: 'strike', label: 'Strike', width: 100, align: 'right' as const },
     { key: 'type', label: 'Type', width: 60, align: 'center' as const },
     { key: 'ltp', label: 'LTP', width: 100, align: 'right' as const },
-    { key: 'change', label: 'Change', width: 100, align: 'right' as const },
+    { key: 'oi_change', label: 'OI Chg', width: 100, align: 'right' as const },
     { key: 'iv', label: 'IV', width: 80, align: 'right' as const },
     { key: 'oi', label: 'OI', width: 100, align: 'right' as const },
     { key: 'volume', label: 'Volume', width: 100, align: 'right' as const },
@@ -87,11 +87,11 @@ export function ScreenerTable({ instruments, isLoading, onSelectSymbol }: Props)
         >
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const instrument = instruments[virtualRow.index];
-            const isPositive = (instrument.change_pct || 0) >= 0;
+            const isPositiveOiChange = (instrument.oi_change || 0) >= 0;
 
             return (
               <div
-                key={instrument.symbol}
+                key={instrument.tradingsymbol}
                 className="absolute top-0 left-0 w-full flex items-center border-b border-border/50 hover:bg-background-tertiary/50 transition-colors"
                 style={{
                   height: `${virtualRow.size}px`,
@@ -100,7 +100,7 @@ export function ScreenerTable({ instruments, isLoading, onSelectSymbol }: Props)
               >
                 {/* Symbol */}
                 <div className="px-3 py-2 shrink-0" style={{ width: columns[0].width }}>
-                  <span className="font-mono text-sm font-medium">{instrument.symbol}</span>
+                  <span className="font-mono text-sm font-medium">{instrument.tradingsymbol}</span>
                 </div>
 
                 {/* Strike */}
@@ -124,18 +124,18 @@ export function ScreenerTable({ instruments, isLoading, onSelectSymbol }: Props)
 
                 {/* LTP */}
                 <div className="px-3 py-2 text-right shrink-0" style={{ width: columns[3].width }}>
-                  <span className="font-mono text-sm">{formatCurrency(instrument.ltp)}</span>
+                  <span className="font-mono text-sm">{formatCurrency(instrument.last_price)}</span>
                 </div>
 
-                {/* Change */}
+                {/* OI Change */}
                 <div className="px-3 py-2 text-right shrink-0" style={{ width: columns[4].width }}>
                   <span
                     className={cn(
                       'font-mono text-sm',
-                      isPositive ? 'text-profit' : 'text-loss'
+                      isPositiveOiChange ? 'text-profit' : 'text-loss'
                     )}
                   >
-                    {isPositive ? '+' : ''}{(instrument.change_pct || 0).toFixed(2)}%
+                    {isPositiveOiChange ? '+' : ''}{formatNumber(instrument.oi_change || 0, 0)}
                   </span>
                 </div>
 
@@ -146,7 +146,7 @@ export function ScreenerTable({ instruments, isLoading, onSelectSymbol }: Props)
 
                 {/* OI */}
                 <div className="px-3 py-2 text-right shrink-0" style={{ width: columns[6].width }}>
-                  <span className="font-mono text-sm">{((instrument.oi || 0) / 1000).toFixed(1)}K</span>
+                  <span className="font-mono text-sm">{((instrument.open_interest || 0) / 1000).toFixed(1)}K</span>
                 </div>
 
                 {/* Volume */}
@@ -171,7 +171,7 @@ export function ScreenerTable({ instruments, isLoading, onSelectSymbol }: Props)
                 {/* Actions */}
                 <div className="px-2 py-2 shrink-0" style={{ width: columns[12].width }}>
                   <button
-                    onClick={() => onSelectSymbol(instrument.underlying)}
+                    onClick={() => onSelectSymbol(instrument.tradingsymbol)}
                     className="p-1 rounded hover:bg-background-tertiary text-foreground-muted hover:text-foreground transition-colors"
                   >
                     <ChevronRight className="w-4 h-4" />

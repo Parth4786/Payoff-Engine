@@ -18,7 +18,21 @@ export default function SensitivityPage() {
   const [daysToExpiry, setDaysToExpiry] = useState(7);
   const [ivShift, setIvShift] = useState(0);
   
-  const { data: surfaces, isLoading } = useSensitivitySurfaces(daysToExpiry, ivShift);
+  const { data: surfacesData, isLoading } = useSensitivitySurfaces(daysToExpiry, ivShift);
+  
+  // Transform SensitivitySurface[] to lookup by type with HeatmapCell format
+  const surfaces = surfacesData?.reduce((acc, surface) => {
+    // Transform surface.surface (SensitivityRow[]) to HeatmapCell[]
+    const heatmapCells = surface.surface.flatMap((row) =>
+      row.values.map((val) => ({
+        spot: row.spot,
+        iv: val.days / 365, // Convert days to fraction for heatmap display
+        value: val.value,
+      }))
+    );
+    acc[surface.type] = heatmapCells;
+    return acc;
+  }, {} as Record<string, Array<{ spot: number; iv: number; value: number }>>);
 
   const toggleGreek = (greek: GreekType) => {
     setSelectedGreeks((prev) =>

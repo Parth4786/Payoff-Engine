@@ -10,7 +10,7 @@ import { Activity, Wifi, WifiOff } from 'lucide-react';
 import Link from 'next/link';
 
 export default function MonitorPage() {
-  const { isConnected, lastMessage, connect, disconnect } = useWebSocket();
+  const { isConnected, reconnect, disconnect } = useWebSocket();
   const { strategy } = useStrategy();
 
   return (
@@ -21,7 +21,7 @@ export default function MonitorPage() {
         actions={
           <div className="flex items-center gap-2">
             <button
-              onClick={isConnected ? disconnect : connect}
+              onClick={isConnected ? disconnect : reconnect}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 isConnected
                   ? 'bg-profit/20 text-profit'

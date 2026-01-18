@@ -30,7 +30,7 @@ export function EventTimeline({ snapshots, currentIndex, onSeek }: Props) {
       if (index < 2) return;
 
       const prevSnap = snapshots[index - 1];
-      const spotChange = ((snap.spot - prevSnap.spot) / prevSnap.spot) * 100;
+      const spotChange = ((snap.underlying_price - prevSnap.underlying_price) / prevSnap.underlying_price) * 100;
       
       // Detect significant moves (>0.5%)
       if (Math.abs(spotChange) > 0.5) {
@@ -39,15 +39,15 @@ export function EventTimeline({ snapshots, currentIndex, onSeek }: Props) {
           timestamp: snap.timestamp,
           type: spotChange > 0 ? 'spike' : 'drop',
           label: `${spotChange > 0 ? '+' : ''}${spotChange.toFixed(2)}% move`,
-          description: `Spot ${spotChange > 0 ? 'jumped' : 'dropped'} from ${prevSnap.spot.toFixed(0)} to ${snap.spot.toFixed(0)}`,
+          description: `Spot ${spotChange > 0 ? 'jumped' : 'dropped'} from ${prevSnap.underlying_price.toFixed(0)} to ${snap.underlying_price.toFixed(0)}`,
         });
       }
 
       // Detect P&L extremes
-      const maxPnl = Math.max(...snapshots.slice(0, index + 1).map((s) => s.pnl || 0));
-      const minPnl = Math.min(...snapshots.slice(0, index + 1).map((s) => s.pnl || 0));
+      const maxPnl = Math.max(...snapshots.slice(0, index + 1).map((s) => s.total_pnl || 0));
+      const minPnl = Math.min(...snapshots.slice(0, index + 1).map((s) => s.total_pnl || 0));
       
-      if (snap.pnl === maxPnl && (snap.pnl || 0) > 0 && index > 0) {
+      if (snap.total_pnl === maxPnl && (snap.total_pnl || 0) > 0 && index > 0) {
         const existing = detectedEvents.find((e) => e.type === 'high' && e.index > index - 5);
         if (!existing) {
           detectedEvents.push({
@@ -55,12 +55,12 @@ export function EventTimeline({ snapshots, currentIndex, onSeek }: Props) {
             timestamp: snap.timestamp,
             type: 'high',
             label: 'P&L High',
-            description: `Peak profit: ₹${(snap.pnl || 0).toFixed(0)}`,
+            description: `Peak profit: ₹${(snap.total_pnl || 0).toFixed(0)}`,
           });
         }
       }
 
-      if (snap.pnl === minPnl && (snap.pnl || 0) < 0 && index > 0) {
+      if (snap.total_pnl === minPnl && (snap.total_pnl || 0) < 0 && index > 0) {
         const existing = detectedEvents.find((e) => e.type === 'low' && e.index > index - 5);
         if (!existing) {
           detectedEvents.push({
@@ -68,7 +68,7 @@ export function EventTimeline({ snapshots, currentIndex, onSeek }: Props) {
             timestamp: snap.timestamp,
             type: 'low',
             label: 'P&L Low',
-            description: `Max drawdown: ₹${(snap.pnl || 0).toFixed(0)}`,
+            description: `Max drawdown: ₹${(snap.total_pnl || 0).toFixed(0)}`,
           });
         }
       }

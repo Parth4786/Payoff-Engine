@@ -26,7 +26,7 @@ export function PayoffTable({ scenario, daysToExpiry }: Props) {
 
   // Get P&L for each level from payoff curve
   const tableData = useMemo(() => {
-    if (!payoffResult?.payoff_curve) {
+    if (!payoffResult?.points || payoffResult.points.length === 0) {
       return spotLevels.map((spot) => ({
         spot,
         pnl: 0,
@@ -36,11 +36,11 @@ export function PayoffTable({ scenario, daysToExpiry }: Props) {
 
     return spotLevels.map((spot) => {
       // Find closest point in payoff curve
-      const point = payoffResult.payoff_curve.reduce((closest, p) => {
+      const point = payoffResult.points.reduce((closest, p) => {
         return Math.abs(p.spot - spot) < Math.abs(closest.spot - spot) ? p : closest;
       });
 
-      const pnl = scenario === 'now' ? point.pnl_now : point.pnl;
+      const pnl = point.pnl;
       const investment = Math.abs(payoffResult.net_premium) || 1;
       const pnlPct = (pnl / investment) * 100;
 

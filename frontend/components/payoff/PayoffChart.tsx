@@ -26,7 +26,7 @@ export function PayoffChart({ scenario, daysToExpiry }: Props) {
 
   // Generate payoff curve data
   const chartData = useMemo(() => {
-    if (!payoffResult?.payoff_curve) {
+    if (!payoffResult?.points || payoffResult.points.length === 0) {
       // Generate placeholder data
       const spotBase = 26300;
       const range = 2000;
@@ -41,12 +41,12 @@ export function PayoffChart({ scenario, daysToExpiry }: Props) {
       return points;
     }
 
-    return payoffResult.payoff_curve.map((point) => ({
+    return payoffResult.points.map((point) => ({
       spot: point.spot,
       pnl: point.pnl,
-      pnlNow: point.pnl_now,
+      pnlNow: point.pnl,
     }));
-  }, [payoffResult?.payoff_curve]);
+  }, [payoffResult?.points]);
 
   // Find key points
   const breakevens = payoffResult?.breakevens || [];

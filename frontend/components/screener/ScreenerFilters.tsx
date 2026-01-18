@@ -22,19 +22,15 @@ export function ScreenerFilters({ filters, onFiltersChange }: Props) {
   const handleReset = () => {
     onFiltersChange({
       underlying: undefined,
-      expiry: undefined,
-      strikeMin: undefined,
-      strikeMax: undefined,
-      optionType: undefined,
-      ivMin: undefined,
-      ivMax: undefined,
-      oiMin: undefined,
-      volumeMin: undefined,
-      deltaMin: undefined,
-      deltaMax: undefined,
-      gammaMin: undefined,
-      thetaMin: undefined,
-      vegaMin: undefined,
+      expiry_ms: undefined,
+      option_type: undefined,
+      min_iv: undefined,
+      max_iv: undefined,
+      min_oi: undefined,
+      min_volume: undefined,
+      min_delta: undefined,
+      max_delta: undefined,
+      moneyness: undefined,
     });
   };
 
@@ -84,10 +80,10 @@ export function ScreenerFilters({ filters, onFiltersChange }: Props) {
       >
         <div className="flex gap-2">
           <button
-            onClick={() => onFiltersChange({ optionType: filters.optionType === 'CE' ? undefined : 'CE' })}
+            onClick={() => onFiltersChange({ option_type: filters.option_type === 'CE' ? undefined : 'CE' })}
             className={cn(
               'flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-              filters.optionType === 'CE'
+              filters.option_type === 'CE'
                 ? 'bg-profit/20 text-profit'
                 : 'bg-background-tertiary text-foreground-muted hover:text-foreground'
             )}
@@ -95,10 +91,10 @@ export function ScreenerFilters({ filters, onFiltersChange }: Props) {
             Calls
           </button>
           <button
-            onClick={() => onFiltersChange({ optionType: filters.optionType === 'PE' ? undefined : 'PE' })}
+            onClick={() => onFiltersChange({ option_type: filters.option_type === 'PE' ? undefined : 'PE' })}
             className={cn(
               'flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-              filters.optionType === 'PE'
+              filters.option_type === 'PE'
                 ? 'bg-loss/20 text-loss'
                 : 'bg-background-tertiary text-foreground-muted hover:text-foreground'
             )}
@@ -110,33 +106,23 @@ export function ScreenerFilters({ filters, onFiltersChange }: Props) {
 
       {/* Moneyness */}
       <FilterSection
-        title="Strike Range"
+        title="Moneyness"
         expanded={expandedSections.includes('moneyness')}
         onToggle={() => toggleSection('moneyness')}
       >
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-foreground-muted block mb-1">Min Strike</label>
-            <input
-              type="number"
-              value={filters.strikeMin || ''}
-              onChange={(e) => onFiltersChange({ strikeMin: Number(e.target.value) || undefined })}
-              placeholder="Any"
-              className="w-full px-3 py-2 text-sm bg-background-tertiary border border-border rounded-lg focus:outline-none focus:border-accent"
-              step={50}
-            />
-          </div>
-          <div>
-            <label className="text-xs text-foreground-muted block mb-1">Max Strike</label>
-            <input
-              type="number"
-              value={filters.strikeMax || ''}
-              onChange={(e) => onFiltersChange({ strikeMax: Number(e.target.value) || undefined })}
-              placeholder="Any"
-              className="w-full px-3 py-2 text-sm bg-background-tertiary border border-border rounded-lg focus:outline-none focus:border-accent"
-              step={50}
-            />
-          </div>
+        <div className="space-y-2">
+          {(['ALL', 'ITM', 'ATM', 'OTM'] as const).map((m) => (
+            <label key={m} className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="moneyness"
+                checked={filters.moneyness === m || (!filters.moneyness && m === 'ALL')}
+                onChange={() => onFiltersChange({ moneyness: m === 'ALL' ? undefined : m })}
+                className="accent-accent"
+              />
+              <span className="text-sm">{m}</span>
+            </label>
+          ))}
         </div>
       </FilterSection>
 
@@ -151,8 +137,8 @@ export function ScreenerFilters({ filters, onFiltersChange }: Props) {
             <label className="text-xs text-foreground-muted block mb-1">Min IV (%)</label>
             <input
               type="number"
-              value={filters.ivMin ? filters.ivMin * 100 : ''}
-              onChange={(e) => onFiltersChange({ ivMin: Number(e.target.value) / 100 || undefined })}
+              value={filters.min_iv ? filters.min_iv * 100 : ''}
+              onChange={(e) => onFiltersChange({ min_iv: Number(e.target.value) / 100 || undefined })}
               placeholder="Any"
               className="w-full px-3 py-2 text-sm bg-background-tertiary border border-border rounded-lg focus:outline-none focus:border-accent"
             />
@@ -161,8 +147,8 @@ export function ScreenerFilters({ filters, onFiltersChange }: Props) {
             <label className="text-xs text-foreground-muted block mb-1">Max IV (%)</label>
             <input
               type="number"
-              value={filters.ivMax ? filters.ivMax * 100 : ''}
-              onChange={(e) => onFiltersChange({ ivMax: Number(e.target.value) / 100 || undefined })}
+              value={filters.max_iv ? filters.max_iv * 100 : ''}
+              onChange={(e) => onFiltersChange({ max_iv: Number(e.target.value) / 100 || undefined })}
               placeholder="Any"
               className="w-full px-3 py-2 text-sm bg-background-tertiary border border-border rounded-lg focus:outline-none focus:border-accent"
             />
@@ -182,8 +168,8 @@ export function ScreenerFilters({ filters, onFiltersChange }: Props) {
               <label className="text-xs text-foreground-muted block mb-1">Delta Min</label>
               <input
                 type="number"
-                value={filters.deltaMin || ''}
-                onChange={(e) => onFiltersChange({ deltaMin: Number(e.target.value) || undefined })}
+                value={filters.min_delta || ''}
+                onChange={(e) => onFiltersChange({ min_delta: Number(e.target.value) || undefined })}
                 placeholder="-1"
                 className="w-full px-2 py-1.5 text-sm bg-background-tertiary border border-border rounded focus:outline-none focus:border-accent"
                 step={0.1}
@@ -195,8 +181,8 @@ export function ScreenerFilters({ filters, onFiltersChange }: Props) {
               <label className="text-xs text-foreground-muted block mb-1">Delta Max</label>
               <input
                 type="number"
-                value={filters.deltaMax || ''}
-                onChange={(e) => onFiltersChange({ deltaMax: Number(e.target.value) || undefined })}
+                value={filters.max_delta || ''}
+                onChange={(e) => onFiltersChange({ max_delta: Number(e.target.value) || undefined })}
                 placeholder="1"
                 className="w-full px-2 py-1.5 text-sm bg-background-tertiary border border-border rounded focus:outline-none focus:border-accent"
                 step={0.1}
@@ -209,8 +195,8 @@ export function ScreenerFilters({ filters, onFiltersChange }: Props) {
             <label className="text-xs text-foreground-muted block mb-1">Min OI (in thousands)</label>
             <input
               type="number"
-              value={filters.oiMin ? filters.oiMin / 1000 : ''}
-              onChange={(e) => onFiltersChange({ oiMin: Number(e.target.value) * 1000 || undefined })}
+              value={filters.min_oi ? filters.min_oi / 1000 : ''}
+              onChange={(e) => onFiltersChange({ min_oi: Number(e.target.value) * 1000 || undefined })}
               placeholder="Any"
               className="w-full px-3 py-2 text-sm bg-background-tertiary border border-border rounded-lg focus:outline-none focus:border-accent"
             />
@@ -219,8 +205,8 @@ export function ScreenerFilters({ filters, onFiltersChange }: Props) {
             <label className="text-xs text-foreground-muted block mb-1">Min Volume</label>
             <input
               type="number"
-              value={filters.volumeMin || ''}
-              onChange={(e) => onFiltersChange({ volumeMin: Number(e.target.value) || undefined })}
+              value={filters.min_volume || ''}
+              onChange={(e) => onFiltersChange({ min_volume: Number(e.target.value) || undefined })}
               placeholder="Any"
               className="w-full px-3 py-2 text-sm bg-background-tertiary border border-border rounded-lg focus:outline-none focus:border-accent"
             />

@@ -14,9 +14,17 @@ export default function ScreenerPage() {
     instruments,
     filters,
     isLoading,
-    pagination,
-    setFilters,
-    setPage,
+    totalCount,
+    currentPage,
+    totalPages,
+    limit,
+    offset,
+    updateFilters,
+    goToPage,
+    nextPage,
+    prevPage,
+    hasNextPage,
+    hasPrevPage,
   } = useScreener();
   
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
@@ -27,7 +35,7 @@ export default function ScreenerPage() {
     <div className="min-h-screen">
       <Navbar
         title="Option Screener"
-        subtitle={`${pagination.total.toLocaleString()} instruments`}
+        subtitle={`${totalCount.toLocaleString()} instruments`}
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -65,7 +73,7 @@ export default function ScreenerPage() {
           <div className="w-72 border-r border-border p-4 overflow-auto">
             <ScreenerFilters
               filters={filters}
-              onFiltersChange={setFilters}
+              onFiltersChange={updateFilters}
             />
           </div>
         )}
@@ -84,22 +92,22 @@ export default function ScreenerPage() {
           {/* Pagination */}
           <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-background-secondary">
             <span className="text-sm text-foreground-muted">
-              Showing {pagination.page * pagination.pageSize + 1} - {Math.min((pagination.page + 1) * pagination.pageSize, pagination.total)} of {pagination.total}
+              Showing {offset + 1} - {Math.min(offset + limit, totalCount)} of {totalCount}
             </span>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setPage(pagination.page - 1)}
-                disabled={pagination.page === 0}
+                onClick={prevPage}
+                disabled={!hasPrevPage}
                 className="px-3 py-1.5 text-sm bg-background-tertiary rounded disabled:opacity-50 hover:bg-background transition-colors"
               >
                 Previous
               </button>
               <span className="text-sm">
-                Page {pagination.page + 1} of {Math.ceil(pagination.total / pagination.pageSize)}
+                Page {currentPage} of {totalPages}
               </span>
               <button
-                onClick={() => setPage(pagination.page + 1)}
-                disabled={(pagination.page + 1) * pagination.pageSize >= pagination.total}
+                onClick={nextPage}
+                disabled={!hasNextPage}
                 className="px-3 py-1.5 text-sm bg-background-tertiary rounded disabled:opacity-50 hover:bg-background transition-colors"
               >
                 Next

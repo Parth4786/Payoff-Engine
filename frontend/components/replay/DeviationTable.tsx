@@ -10,37 +10,49 @@ interface Props {
 }
 
 export function DeviationTable({ snapshots, comparison }: Props) {
-  // Calculate deviations between actual and predicted
-  const deviations = useMemo(() => {
-    if (!comparison?.points) return [];
+  // Build summary and snapshot-based deviations
+  const summaryData = useMemo(() => {
+    if (!comparison) return null;
 
-    return snapshots.slice(0, 20).map((snap) => {
-      const predicted = comparison.points.find(
-        (p) => Math.abs(p.timestamp - snap.timestamp) < 60000
-      );
+    const pnlDeviation = comparison.at_actual_time.actual_pnl - 
+      comparison.at_prediction_time.predicted_pnl_at_current_spot;
+    const priceDeviation = comparison.at_actual_time.underlying_price - 
+      comparison.at_prediction_time.underlying_price;
 
-      const deviation = predicted
-        ? ((snap.pnl || 0) - predicted.predicted_pnl)
-        : null;
+    return {
+      predictionTime: new Date(comparison.prediction_timestamp).toLocaleString('en-IN'),
+      actualTime: new Date(comparison.actual_timestamp).toLocaleString('en-IN'),
+      elapsed: comparison.time_elapsed_hours,
+      predicted: {
+        price: comparison.at_prediction_time.underlying_price,
+        pnl: comparison.at_prediction_time.predicted_pnl_at_current_spot,
+        breakeven: comparison.at_prediction_time.predicted_breakeven,
+      },
+      actual: {
+        price: comparison.at_actual_time.underlying_price,
+        pnl: comparison.at_actual_time.actual_pnl,
+        breakeven: comparison.at_actual_time.actual_breakeven,
+      },
+      deviation: {
+        pnl: pnlDeviation,
+        price: priceDeviation,
+        accuracy: comparison.deviation.prediction_accuracy_score,
+      },
+    };
+  }, [comparison]);
 
-      const deviationPct = predicted && predicted.predicted_pnl !== 0
-        ? (deviation! / Math.abs(predicted.predicted_pnl)) * 100
-        : null;
-
-      return {
-        timestamp: snap.timestamp,
-        time: new Date(snap.timestamp).toLocaleTimeString('en-IN', {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-        actual: snap.pnl || 0,
-        predicted: predicted?.predicted_pnl,
-        deviation,
-        deviationPct,
-        spot: snap.spot,
-      };
-    });
-  }, [snapshots, comparison]);
+  // Show recent snapshots with their P&L
+  const snapshotData = useMemo(() => {
+    return snapshots.slice(-10).map((snap) => ({
+      timestamp: snap.timestamp,
+      time: new Date(snap.timestamp).toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      spot: snap.underlying_price,
+      pnl: snap.total_pnl || 0,
+    }));
+  }, [snapshots]);
 
   if (!comparison) {
     return (
@@ -51,58 +63,73 @@ export function DeviationTable({ snapshots, comparison }: Props) {
   }
 
   return (
-    <div className="max-h-[300px] overflow-auto">
-      <table className="w-full text-sm">
-        <thead className="sticky top-0 bg-background-secondary z-10">
-          <tr className="border-b border-border">
-            <th className="px-4 py-2 text-left text-foreground-muted font-medium">Time</th>
-            <th className="px-4 py-2 text-right text-foreground-muted font-medium">Spot</th>
-            <th className="px-4 py-2 text-right text-foreground-muted font-medium">Actual</th>
-            <th className="px-4 py-2 text-right text-foreground-muted font-medium">Predicted</th>
-            <th className="px-4 py-2 text-right text-foreground-muted font-medium">Deviation</th>
-          </tr>
-        </thead>
-        <tbody>
-          {deviations.map((row, i) => (
-            <tr
-              key={row.timestamp}
-              className="border-b border-border/50 hover:bg-background-tertiary/50 transition-colors"
-            >
-              <td className="px-4 py-2 text-foreground-secondary">{row.time}</td>
-              <td className="px-4 py-2 text-right font-mono">{formatNumber(row.spot, 0)}</td>
-              <td
-                className={cn(
-                  'px-4 py-2 text-right font-mono',
-                  row.actual >= 0 ? 'text-profit' : 'text-loss'
-                )}
-              >
-                {formatCurrency(row.actual)}
-              </td>
-              <td className="px-4 py-2 text-right font-mono text-info">
-                {row.predicted !== undefined ? formatCurrency(row.predicted) : '-'}
-              </td>
-              <td
-                className={cn(
-                  'px-4 py-2 text-right font-mono',
-                  row.deviation !== null && row.deviation >= 0 ? 'text-profit' : 'text-loss'
-                )}
-              >
-                {row.deviation !== null ? (
-                  <>
-                    {row.deviation >= 0 ? '+' : ''}
-                    {formatCurrency(row.deviation)}
-                    <span className="text-xs text-foreground-muted ml-1">
-                      ({row.deviationPct?.toFixed(1)}%)
-                    </span>
-                  </>
-                ) : (
-                  '-'
-                )}
-              </td>
+    <div className="space-y-4">
+      {/* Summary Comparison */}
+      {summaryData && (
+        <div className="grid grid-cols-3 gap-4 p-4 bg-background-tertiary/50 rounded-lg">
+          <div>
+            <div className="text-xs text-foreground-muted mb-1">Predicted P&L</div>
+            <div className={cn(
+              'font-mono font-medium',
+              summaryData.predicted.pnl >= 0 ? 'text-profit' : 'text-loss'
+            )}>
+              {formatCurrency(summaryData.predicted.pnl)}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-foreground-muted mb-1">Actual P&L</div>
+            <div className={cn(
+              'font-mono font-medium',
+              summaryData.actual.pnl >= 0 ? 'text-profit' : 'text-loss'
+            )}>
+              {formatCurrency(summaryData.actual.pnl)}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-foreground-muted mb-1">Deviation</div>
+            <div className={cn(
+              'font-mono font-medium',
+              summaryData.deviation.pnl >= 0 ? 'text-profit' : 'text-loss'
+            )}>
+              {summaryData.deviation.pnl >= 0 ? '+' : ''}
+              {formatCurrency(summaryData.deviation.pnl)}
+              <span className="text-xs ml-1">({summaryData.deviation.accuracy.toFixed(1)}%)</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recent Snapshots */}
+      <div className="max-h-[200px] overflow-auto">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-background-secondary z-10">
+            <tr className="border-b border-border">
+              <th className="px-4 py-2 text-left text-foreground-muted font-medium">Time</th>
+              <th className="px-4 py-2 text-right text-foreground-muted font-medium">Spot</th>
+              <th className="px-4 py-2 text-right text-foreground-muted font-medium">P&L</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {snapshotData.map((row) => (
+              <tr
+                key={row.timestamp}
+                className="border-b border-border/50 hover:bg-background-tertiary/50 transition-colors"
+              >
+                <td className="px-4 py-2 text-foreground-secondary">{row.time}</td>
+                <td className="px-4 py-2 text-right font-mono">{formatNumber(row.spot, 0)}</td>
+                <td
+                  className={cn(
+                    'px-4 py-2 text-right font-mono',
+                    row.pnl >= 0 ? 'text-profit' : 'text-loss'
+                  )}
+                >
+                  {formatCurrency(row.pnl)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

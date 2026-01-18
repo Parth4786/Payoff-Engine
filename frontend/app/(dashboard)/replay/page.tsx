@@ -16,24 +16,36 @@ import { History, RotateCcw, Download } from 'lucide-react';
 export default function ReplayPage() {
   const { strategy } = useStrategy();
   const {
-    session,
+    sessionId,
+    startTimestamp,
+    endTimestamp,
     snapshots,
     currentSnapshot,
-    prediction,
-    comparison,
-    isPlaying,
-    playbackSpeed,
-    currentIndex,
-    isLoading,
+    predictionData,
+    comparisonData,
+    status,
+    speed,
     error,
-    initReplay,
+    initReplay: storeInitReplay,
     play,
     pause,
-    seekTo,
+    seek,
     setSpeed,
     loadPrediction,
-    compareReplay,
+    loadComparison,
+    getCurrentSnapshotIndex,
+    isLoadingReplay,
   } = useReplay();
+
+  // Derived state
+  const session = sessionId && startTimestamp && endTimestamp 
+    ? { id: sessionId, start_ts: startTimestamp, end_ts: endTimestamp }
+    : null;
+  const isPlaying = status === 'playing';
+  const isLoading = status === 'loading' || isLoadingReplay;
+  const currentIndex = getCurrentSnapshotIndex();
+  const prediction = predictionData;
+  const comparison = comparisonData;
 
   const [showPrediction, setShowPrediction] = useState(true);
   const [compareMode, setCompareMode] = useState(false);
@@ -45,8 +57,8 @@ export default function ReplayPage() {
     const end = Date.now();
     const start = end - 7 * 24 * 60 * 60 * 1000;
     
-    await initReplay(
-      strategy.underlying,
+    await storeInitReplay(
+      strategy,
       start,
       end,
       5 * 60 * 1000 // 5-minute intervals
@@ -131,7 +143,7 @@ export default function ReplayPage() {
                 <TimelineScrubber
                   snapshots={snapshots}
                   currentIndex={currentIndex}
-                  onSeek={seekTo}
+                  onSeek={seek}
                 />
               </div>
             </div>
@@ -141,7 +153,7 @@ export default function ReplayPage() {
               <div className="card-content">
                 <ReplayControls
                   isPlaying={isPlaying}
-                  speed={playbackSpeed}
+                  speed={speed}
                   onPlay={play}
                   onPause={pause}
                   onSpeedChange={setSpeed}
@@ -171,7 +183,7 @@ export default function ReplayPage() {
                   <div className="card-content">
                     <PredictionPanel
                       prediction={prediction}
-                      onLoadPrediction={() => loadPrediction(currentSnapshot?.timestamp || 0)}
+                      onLoadPrediction={loadPrediction}
                     />
                   </div>
                 </div>
@@ -184,7 +196,7 @@ export default function ReplayPage() {
                 <h2 className="card-title">Payoff Over Time</h2>
                 {!comparison && (
                   <button
-                    onClick={() => compareReplay()}
+                    onClick={() => loadComparison()}
                     className="text-sm text-accent hover:text-accent/80 transition-colors"
                   >
                     Load Comparison
@@ -224,7 +236,7 @@ export default function ReplayPage() {
                   <EventTimeline
                     snapshots={snapshots}
                     currentIndex={currentIndex}
-                    onSeek={seekTo}
+                    onSeek={seek}
                   />
                 </div>
               </div>

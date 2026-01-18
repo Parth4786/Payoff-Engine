@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { cn, formatCurrency, formatNumber } from '@/lib/utils';
-import { Brain, RefreshCw, TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react';
+import { Brain, RefreshCw, TrendingUp, TrendingDown, Calendar } from 'lucide-react';
 import type { PredictionResponse } from '@/lib/types';
 
 interface Props {
@@ -12,12 +12,35 @@ interface Props {
 
 export function PredictionPanel({ prediction, onLoadPrediction }: Props) {
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedHorizon, setSelectedHorizon] = useState(0);
 
   const handleLoad = async () => {
     setIsLoading(true);
     await onLoadPrediction();
     setIsLoading(false);
   };
+
+  // Extract prediction data for selected horizon
+  const horizonData = useMemo(() => {
+    if (!prediction || !prediction.predictions.length) return null;
+    
+    const pred = prediction.predictions[selectedHorizon];
+    if (!pred) return null;
+
+    // Find max profit/loss from payoff curve
+    const maxPnl = Math.max(...pred.predicted_payoff.map(p => p.pnl));
+    const minPnl = Math.min(...pred.predicted_payoff.map(p => p.pnl));
+    const isBullish = maxPnl > Math.abs(minPnl);
+
+    return {
+      horizon: pred.horizon,
+      greeks: pred.predicted_greeks,
+      maxPnl,
+      minPnl,
+      isBullish,
+      payoffPoints: pred.predicted_payoff,
+    };
+  }, [prediction, selectedHorizon]);
 
   if (!prediction) {
     return (
@@ -44,106 +67,118 @@ export function PredictionPanel({ prediction, onLoadPrediction }: Props) {
     );
   }
 
-  const isBullish = prediction.direction === 'bullish';
-  const isNeutral = prediction.direction === 'neutral';
-
   return (
     <div className="space-y-4">
-      {/* Direction Indicator */}
-      <div
-        className={cn(
-          'p-4 rounded-lg text-center',
-          isBullish && 'bg-profit/10 border border-profit/20',
-          !isBullish && !isNeutral && 'bg-loss/10 border border-loss/20',
-          isNeutral && 'bg-warning/10 border border-warning/20'
-        )}
-      >
-        <div className="flex items-center justify-center gap-2 mb-2">
-          {isBullish ? (
-            <TrendingUp className="w-6 h-6 text-profit" />
-          ) : isNeutral ? (
-            <AlertTriangle className="w-6 h-6 text-warning" />
-          ) : (
-            <TrendingDown className="w-6 h-6 text-loss" />
-          )}
-          <span
-            className={cn(
-              'text-lg font-semibold capitalize',
-              isBullish && 'text-profit',
-              !isBullish && !isNeutral && 'text-loss',
-              isNeutral && 'text-warning'
-            )}
-          >
-            {prediction.direction}
-          </span>
-        </div>
-        <div className="text-sm text-foreground-muted">
-          Confidence: <span className="font-mono">{(prediction.confidence * 100).toFixed(0)}%</span>
-        </div>
-      </div>
-
-      {/* Predicted Values */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/50">
-          <span className="text-sm text-foreground-muted">Predicted Spot</span>
-          <span className="font-mono font-semibold">
-            {formatNumber(prediction.predicted_spot, 2)}
-          </span>
-        </div>
-        
-        <div className="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/50">
-          <span className="text-sm text-foreground-muted">Predicted P&L</span>
-          <span
-            className={cn(
-              'font-mono font-semibold',
-              prediction.predicted_pnl >= 0 ? 'text-profit' : 'text-loss'
-            )}
-          >
-            {formatCurrency(prediction.predicted_pnl)}
-          </span>
-        </div>
-
-        {prediction.predicted_iv !== undefined && (
-          <div className="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/50">
-            <span className="text-sm text-foreground-muted">Predicted IV</span>
-            <span className="font-mono">
-              {(prediction.predicted_iv * 100).toFixed(1)}%
-            </span>
+      {/* Market State at Prediction Time */}
+      <div className="p-3 rounded-lg bg-background-tertiary/50">
+        <span className="text-xs text-foreground-muted block mb-2">Market State</span>
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <div>
+            <span className="text-foreground-muted">Spot:</span>
+            <span className="ml-1 font-mono">{formatNumber(prediction.market_state_at_time.underlying_price, 0)}</span>
           </div>
-        )}
+          <div>
+            <span className="text-foreground-muted">IV:</span>
+            <span className="ml-1 font-mono">{(prediction.market_state_at_time.atm_iv * 100).toFixed(1)}%</span>
+          </div>
+          <div className="col-span-2">
+            <span className="text-foreground-muted">DTE:</span>
+            <span className="ml-1 font-mono">{prediction.market_state_at_time.days_to_expiry.toFixed(1)} days</span>
+          </div>
+        </div>
       </div>
 
-      {/* Range Forecast */}
-      {prediction.range && (
-        <div className="p-3 rounded-lg bg-background-tertiary/50">
-          <span className="text-xs text-foreground-muted block mb-2">Expected Range</span>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-loss font-mono">{formatNumber(prediction.range.low, 0)}</span>
-            <div className="flex-1 mx-3 h-1 bg-background rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-loss via-warning to-profit" />
+      {/* Horizon Selector */}
+      {prediction.predictions.length > 1 && (
+        <div className="flex gap-2">
+          {prediction.predictions.map((pred, i) => (
+            <button
+              key={i}
+              onClick={() => setSelectedHorizon(i)}
+              className={cn(
+                'flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-colors',
+                selectedHorizon === i
+                  ? 'bg-accent text-white'
+                  : 'bg-background-tertiary text-foreground-muted hover:text-foreground'
+              )}
+            >
+              +{pred.horizon.days_forward}D
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Prediction Data */}
+      {horizonData && (
+        <>
+          {/* Direction Indicator */}
+          <div
+            className={cn(
+              'p-4 rounded-lg text-center',
+              horizonData.isBullish ? 'bg-profit/10 border border-profit/20' : 'bg-loss/10 border border-loss/20'
+            )}
+          >
+            <div className="flex items-center justify-center gap-2 mb-2">
+              {horizonData.isBullish ? (
+                <TrendingUp className="w-6 h-6 text-profit" />
+              ) : (
+                <TrendingDown className="w-6 h-6 text-loss" />
+              )}
+              <span
+                className={cn(
+                  'text-lg font-semibold',
+                  horizonData.isBullish ? 'text-profit' : 'text-loss'
+                )}
+              >
+                {horizonData.isBullish ? 'Bullish' : 'Bearish'}
+              </span>
             </div>
-            <span className="text-sm text-profit font-mono">{formatNumber(prediction.range.high, 0)}</span>
+            <div className="text-sm text-foreground-muted">
+              Horizon: <span className="font-mono">{horizonData.horizon.days_forward} days</span>
+            </div>
           </div>
-        </div>
-      )}
 
-      {/* Reasoning */}
-      {prediction.reasoning && (
-        <div className="p-3 rounded-lg bg-info/5 border border-info/10">
-          <span className="text-xs text-info block mb-1">AI Reasoning</span>
-          <p className="text-sm text-foreground-secondary">{prediction.reasoning}</p>
-        </div>
-      )}
+          {/* Predicted P&L Range */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/50">
+              <span className="text-sm text-foreground-muted">Max Profit</span>
+              <span className="font-mono font-semibold text-profit">
+                {formatCurrency(horizonData.maxPnl)}
+              </span>
+            </div>
+            
+            <div className="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/50">
+              <span className="text-sm text-foreground-muted">Max Loss</span>
+              <span className="font-mono font-semibold text-loss">
+                {formatCurrency(horizonData.minPnl)}
+              </span>
+            </div>
+          </div>
 
-      {/* Refresh */}
-      <button
-        onClick={handleLoad}
-        disabled={isLoading}
-        className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-foreground-muted hover:text-foreground bg-background-tertiary rounded-lg hover:bg-background transition-colors"
-      >
-        <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
-        Refresh Prediction
-      </button>
+          {/* Greeks */}
+          <div className="p-3 rounded-lg bg-background-tertiary/50">
+            <span className="text-xs text-foreground-muted block mb-2">Predicted Greeks</span>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-foreground-muted">Δ:</span>
+                <span className="ml-1 font-mono">{horizonData.greeks.delta.toFixed(3)}</span>
+              </div>
+              <div>
+                <span className="text-foreground-muted">Γ:</span>
+                <span className="ml-1 font-mono">{horizonData.greeks.gamma.toFixed(4)}</span>
+              </div>
+              <div>
+                <span className="text-foreground-muted">Θ:</span>
+                <span className="ml-1 font-mono">{horizonData.greeks.theta.toFixed(2)}</span>
+              </div>
+              <div>
+                <span className="text-foreground-muted">ν:</span>
+                <span className="ml-1 font-mono">{horizonData.greeks.vega.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

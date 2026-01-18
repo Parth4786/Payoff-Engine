@@ -2,7 +2,7 @@
 
 import { GreeksDisplay, PnLDisplay } from '@/components/shared';
 import { formatNumber, formatCurrency, cn } from '@/lib/utils';
-import { TrendingUp, TrendingDown, Activity, Percent } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, Percent, Clock } from 'lucide-react';
 import type { ReplaySnapshot } from '@/lib/types';
 
 interface Props {
@@ -18,75 +18,51 @@ export function MarketStatePanel({ snapshot }: Props) {
     );
   }
 
-  const spotChange = snapshot.spot_change || 0;
-  const isPositive = spotChange >= 0;
+  const isProfit = snapshot.total_pnl >= 0;
+  const time = new Date(snapshot.timestamp).toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      {/* Spot Price */}
+      {/* Underlying Price */}
       <div className="p-4 rounded-lg bg-background-tertiary/50">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-foreground-muted">Spot Price</span>
-          {isPositive ? (
+          <span className="text-xs text-foreground-muted">Underlying Price</span>
+          {isProfit ? (
             <TrendingUp className="w-4 h-4 text-profit" />
           ) : (
             <TrendingDown className="w-4 h-4 text-loss" />
           )}
         </div>
         <div className="text-2xl font-mono font-semibold">
-          {formatNumber(snapshot.spot, 2)}
-        </div>
-        <div
-          className={cn(
-            'text-xs font-mono mt-1',
-            isPositive ? 'text-profit' : 'text-loss'
-          )}
-        >
-          {isPositive ? '+' : ''}
-          {formatNumber(spotChange, 2)} ({((spotChange / (snapshot.spot - spotChange)) * 100).toFixed(2)}%)
+          {formatNumber(snapshot.underlying_price, 2)}
         </div>
       </div>
 
-      {/* IV */}
+      {/* Time */}
       <div className="p-4 rounded-lg bg-background-tertiary/50">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-foreground-muted">Implied Volatility</span>
-          <Percent className="w-4 h-4 text-accent" />
+          <span className="text-xs text-foreground-muted">Snapshot Time</span>
+          <Clock className="w-4 h-4 text-accent" />
         </div>
         <div className="text-2xl font-mono font-semibold">
-          {((snapshot.iv || 0) * 100).toFixed(1)}%
+          {time}
         </div>
-        {snapshot.iv_change !== undefined && (
-          <div
-            className={cn(
-              'text-xs font-mono mt-1',
-              snapshot.iv_change >= 0 ? 'text-profit' : 'text-loss'
-            )}
-          >
-            {snapshot.iv_change >= 0 ? '+' : ''}
-            {(snapshot.iv_change * 100).toFixed(2)}%
-          </div>
-        )}
+        <div className="text-xs text-foreground-muted mt-1">
+          {new Date(snapshot.timestamp).toLocaleDateString('en-IN')}
+        </div>
       </div>
 
       {/* P&L */}
       <div className="p-4 rounded-lg bg-background-tertiary/50">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-foreground-muted">Current P&L</span>
+          <span className="text-xs text-foreground-muted">Total P&L</span>
           <Activity className="w-4 h-4 text-info" />
         </div>
-        <PnLDisplay value={snapshot.pnl || 0} size="lg" />
-        {snapshot.pnl_change !== undefined && (
-          <div
-            className={cn(
-              'text-xs font-mono mt-1',
-              snapshot.pnl_change >= 0 ? 'text-profit' : 'text-loss'
-            )}
-          >
-            {snapshot.pnl_change >= 0 ? '+' : ''}
-            {formatCurrency(snapshot.pnl_change)}
-          </div>
-        )}
+        <PnLDisplay value={snapshot.total_pnl || 0} size="lg" />
       </div>
 
       {/* Greeks Snapshot */}

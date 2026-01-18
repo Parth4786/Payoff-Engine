@@ -169,30 +169,20 @@ export function TimelineScrubber({ snapshots, currentIndex, onSeek }: Props) {
           <div className="flex items-center gap-2">
             <span className="text-foreground-muted">Spot:</span>
             <span className="font-mono font-semibold">
-              {formatNumber(currentSnapshot.spot, 2)}
+              {formatNumber(currentSnapshot.underlying_price, 2)}
             </span>
           </div>
-          {currentSnapshot.iv !== undefined && (
-            <div className="flex items-center gap-2">
-              <span className="text-foreground-muted">IV:</span>
-              <span className="font-mono">
-                {(currentSnapshot.iv * 100).toFixed(1)}%
-              </span>
-            </div>
-          )}
-          {currentSnapshot.pnl !== undefined && (
-            <div className="flex items-center gap-2">
-              <span className="text-foreground-muted">P&L:</span>
-              <span
-                className={cn(
-                  'font-mono font-semibold',
-                  currentSnapshot.pnl >= 0 ? 'text-profit' : 'text-loss'
-                )}
-              >
-                ₹{formatNumber(currentSnapshot.pnl, 0)}
-              </span>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <span className="text-foreground-muted">P&L:</span>
+            <span
+              className={cn(
+                'font-mono font-semibold',
+                currentSnapshot.total_pnl >= 0 ? 'text-profit' : 'text-loss'
+              )}
+            >
+              ₹{formatNumber(currentSnapshot.total_pnl, 0)}
+            </span>
+          </div>
         </div>
       )}
     </div>

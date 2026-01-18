@@ -126,11 +126,11 @@ export function OptionChainModal({ symbol, onClose }: Props) {
                       <td className={cn('px-2 py-1.5 text-right font-mono font-medium', isITMCall && 'bg-profit/5')}>
                         {strike.call ? formatCurrency(strike.call.last_price) : '-'}
                       </td>
-                      {/* Call Change */}
+                      {/* Call Change (OI Change) */}
                       <td className={cn('px-2 py-1.5 text-right font-mono border-r border-border', isITMCall && 'bg-profit/5')}>
                         {strike.call ? (
-                          <span className={strike.call.change_pct >= 0 ? 'text-profit' : 'text-loss'}>
-                            {strike.call.change_pct >= 0 ? '+' : ''}{strike.call.change_pct.toFixed(1)}%
+                          <span className={strike.call.oi_change >= 0 ? 'text-profit' : 'text-loss'}>
+                            {strike.call.oi_change >= 0 ? '+' : ''}{formatNumber(strike.call.oi_change / 1000, 1)}K
                           </span>
                         ) : '-'}
                       </td>
@@ -141,11 +141,11 @@ export function OptionChainModal({ symbol, onClose }: Props) {
                         {isATM && <span className="ml-1 text-xs">ATM</span>}
                       </td>
 
-                      {/* Put Change */}
+                      {/* Put Change (OI Change) */}
                       <td className={cn('px-2 py-1.5 text-right font-mono border-l border-border', isITMPut && 'bg-loss/5')}>
                         {strike.put ? (
-                          <span className={strike.put.change_pct >= 0 ? 'text-profit' : 'text-loss'}>
-                            {strike.put.change_pct >= 0 ? '+' : ''}{strike.put.change_pct.toFixed(1)}%
+                          <span className={strike.put.oi_change >= 0 ? 'text-profit' : 'text-loss'}>
+                            {strike.put.oi_change >= 0 ? '+' : ''}{formatNumber(strike.put.oi_change / 1000, 1)}K
                           </span>
                         ) : '-'}
                       </td>
