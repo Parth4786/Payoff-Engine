@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <iomanip>
 #include <iostream>
@@ -46,6 +47,47 @@ struct ScreenerService::Impl {
     
     // ========================================================================
     // Helpers
+        static int64_t parse_expiry_ms(const std::string& s) {
+            if (s.empty()) return 0;
+
+            // Some deployments store expiry as a unix-ms integer.
+            try {
+                size_t idx = 0;
+                int64_t v = std::stoll(s, &idx);
+                if (idx == s.size()) return v;
+            } catch (...) {
+            }
+
+            // Common ClickHouse shape: Date or DateTime as string.
+            // We parse YYYY-MM-DD and ignore time-of-day.
+            if (s.size() >= 10 && s[4] == '-' && s[7] == '-') {
+                try {
+                    int year = std::stoi(s.substr(0, 4));
+                    int month = std::stoi(s.substr(5, 2));
+                    int day = std::stoi(s.substr(8, 2));
+
+                    std::tm tm{};
+                    tm.tm_year = year - 1900;
+                    tm.tm_mon = month - 1;
+                    tm.tm_mday = day;
+                    tm.tm_hour = 0;
+                    tm.tm_min = 0;
+                    tm.tm_sec = 0;
+
+    #ifdef _WIN32
+                    time_t utc_seconds = _mkgmtime(&tm);
+    #else
+                    time_t utc_seconds = timegm(&tm);
+    #endif
+                    if (utc_seconds <= 0) return 0;
+                    return static_cast<int64_t>(utc_seconds) * 1000;
+                } catch (...) {
+                    return 0;
+                }
+            }
+
+            return 0;
+        }
     // ========================================================================
     
     std::string timestamp_to_sql(Timestamp ts) {
@@ -144,6 +186,48 @@ struct ScreenerService::Impl {
         if (tradingsymbol.find("MIDCPNIFTY") == 0) return "MIDCPNIFTY";
         return tradingsymbol.substr(0, std::min(size_t(10), tradingsymbol.length()));
     }
+
+    static std::string normalize_exchange_string(std::string s) {
+        if (s == "1") return "NSE";
+        if (s == "2") return "NFO";
+        if (s == "3") return "BSE";
+        if (s == "4") return "BFO";
+        if (s == "5") return "CDS";
+        if (s == "6") return "MCX";
+        return s;
+    }
+
+    static core::InstrumentType parse_instrument_type_fallback(const std::string& inst_type_str) {
+        // Accept both string enums ("CE") and numeric encodings ("3").
+        if (inst_type_str == "CE") return core::InstrumentType::CE;
+        if (inst_type_str == "PE") return core::InstrumentType::PE;
+        if (inst_type_str == "FUT") return core::InstrumentType::FUT;
+        if (inst_type_str == "EQ") return core::InstrumentType::EQ;
+        if (!inst_type_str.empty() &&
+            std::all_of(inst_type_str.begin(), inst_type_str.end(),
+                        [](unsigned char c) { return std::isdigit(c) != 0; })) {
+            try {
+                int v = std::stoi(inst_type_str);
+                switch (v) {
+                    case 1: return core::InstrumentType::EQ;
+                    case 2: return core::InstrumentType::FUT;
+                    case 3: return core::InstrumentType::CE;
+                    case 4: return core::InstrumentType::PE;
+                    default: return core::InstrumentType::Unknown;
+                }
+            } catch (...) {
+                return core::InstrumentType::Unknown;
+            }
+        }
+        return core::InstrumentType::Unknown;
+    }
+
+    static int64_t expiry_ymd_to_ms(const std::chrono::year_month_day& ymd) {
+        using namespace std::chrono;
+        // Midnight UTC on expiry date.
+        auto d = sys_days{ymd};
+        return duration_cast<milliseconds>(d.time_since_epoch()).count();
+    }
     
     // ========================================================================
     // Main Query Functions
@@ -163,7 +247,7 @@ struct ScreenerService::Impl {
         query << "SELECT "
               << "instrument_id, tradingsymbol, instrument_type, "
               << "last_price, bid_price_0, ask_price_0, "
-              << "total_traded_quantity, open_interest, "
+              << "total_traded_quantity, toInt64(0) as open_interest, "
               << "toUnixTimestamp64Milli(exchange_timestamp) as ts_ms, "
               << "exchange, expiry, strike, "
               << "open_price, high_price, low_price, close_price "
@@ -171,18 +255,46 @@ struct ScreenerService::Impl {
               << "WHERE exchange_timestamp <= '" << timestamp_to_sql(timestamp) << "' "
               << "AND exchange_timestamp >= '" << timestamp_to_sql(timestamp - Timestamp(60000)) << "' ";  // Within 1 minute
         
-        // Apply exchange filter
+        // Apply exchange filter (supports ClickHouse exchange stored as numeric or string)
         if (!filter.exchanges.empty()) {
-            query << "AND exchange IN (";
+            query << "AND toString(exchange) IN (";
             for (size_t i = 0; i < filter.exchanges.size(); ++i) {
                 if (i > 0) query << ",";
-                query << "'" << filter.exchanges[i] << "'";
+                const auto& ex = filter.exchanges[i];
+                if (ex == "NSE") {
+                    query << "'NSE','1'";
+                } else if (ex == "NFO") {
+                    query << "'NFO','2'";
+                } else {
+                    query << "'" << ex << "'";
+                }
             }
             query << ") ";
         }
         
-        // Apply underlying filter (via tradingsymbol LIKE)
-        if (!filter.underlyings.empty()) {
+        // Apply underlying filter
+        // ClickHouse rows may not contain tradingsymbol; prefer filtering by instrument_id
+        // using InstrumentManager when available.
+        if (!filter.underlyings.empty() && instrument_manager && !instrument_manager->empty()) {
+            std::unordered_set<uint32_t> ids;
+            for (const auto& u : filter.underlyings) {
+                for (const auto* info : instrument_manager->get_by_underlying(u)) {
+                    if (!info) continue;
+                    ids.insert(instrument_manager->get_clickhouse_id(info->instrument_token));
+                }
+            }
+            if (!ids.empty()) {
+                query << "AND instrument_id IN (";
+                bool first = true;
+                for (auto id : ids) {
+                    if (!first) query << ",";
+                    first = false;
+                    query << id;
+                }
+                query << ") ";
+            }
+        } else if (!filter.underlyings.empty()) {
+            // Fallback to tradingsymbol prefix matching.
             query << "AND (";
             for (size_t i = 0; i < filter.underlyings.size(); ++i) {
                 if (i > 0) query << " OR ";
@@ -194,9 +306,6 @@ struct ScreenerService::Impl {
         // Volume/OI filter
         if (filter.min_volume) {
             query << "AND total_traded_quantity >= " << *filter.min_volume << " ";
-        }
-        if (filter.min_oi) {
-            query << "AND open_interest >= " << *filter.min_oi << " ";
         }
         
         query << "ORDER BY exchange_timestamp DESC "
@@ -222,18 +331,18 @@ struct ScreenerService::Impl {
                     snap.instrument_id = instrument_id;
                     snap.tradingsymbol = cols[1];
                     snap.underlying = extract_underlying(cols[1]);
-                    
-                    // Parse instrument type
-                    std::string inst_type_str = cols[2];
-                    if (inst_type_str == "CE") {
-                        snap.instrument_type = InstrumentType::CE;
+
+                    // Exchange (may be numeric or string)
+                    snap.exchange = normalize_exchange_string(cols[9]);
+
+                    // Parse instrument type (may be empty / numeric)
+                    snap.instrument_type = parse_instrument_type_fallback(cols[2]);
+                    if (snap.instrument_type == InstrumentType::CE) {
                         snap.option_type = engine::OptionType::Call;
-                    } else if (inst_type_str == "PE") {
-                        snap.instrument_type = InstrumentType::PE;
+                    } else if (snap.instrument_type == InstrumentType::PE) {
                         snap.option_type = engine::OptionType::Put;
-                    } else if (inst_type_str == "FUT") {
-                        snap.instrument_type = InstrumentType::FUT;
-                    } else {
+                    } else if (snap.instrument_type == InstrumentType::Unknown) {
+                        // Treat unknown as equity to keep behavior stable.
                         snap.instrument_type = InstrumentType::EQ;
                     }
                     
@@ -251,18 +360,35 @@ struct ScreenerService::Impl {
                     
                     // Timestamp
                     snap.exchange_timestamp = Timestamp(std::stoll(cols[8]));
-                    
-                    // Exchange and option details
-                    snap.exchange = cols[9];
-                    
+
                     // Parse expiry (may be date string or unix timestamp)
-                    try {
-                        snap.expiry_ms = std::stoll(cols[10]);
-                    } catch (...) {
-                        snap.expiry_ms = 0;
-                    }
+                    snap.expiry_ms = parse_expiry_ms(cols[10]);
                     
                     snap.strike = std::stod(cols[11]);
+
+                    // Enrich using InstrumentManager when ClickHouse metadata is missing or unreliable.
+                    if (instrument_manager && !instrument_manager->empty()) {
+                        if (const auto* info = instrument_manager->resolve_by_clickhouse_id(instrument_id)) {
+                            if (snap.tradingsymbol.empty()) snap.tradingsymbol = info->tradingsymbol;
+                            if (snap.underlying.empty()) snap.underlying = info->underlying;
+                            snap.exchange = core::exchange_to_string(info->exchange);
+
+                            if (info->instrument_type != core::InstrumentType::Unknown) {
+                                snap.instrument_type = info->instrument_type;
+                                if (snap.instrument_type == InstrumentType::CE) snap.option_type = engine::OptionType::Call;
+                                if (snap.instrument_type == InstrumentType::PE) snap.option_type = engine::OptionType::Put;
+                            }
+
+                            if (info->strike) {
+                                snap.strike = *info->strike;
+                            }
+                            if (info->expiry) {
+                                // Prefer instrument master expiry if ClickHouse returned 0.
+                                auto ms = expiry_ymd_to_ms(*info->expiry);
+                                if (snap.expiry_ms <= 0) snap.expiry_ms = ms;
+                            }
+                        }
+                    }
                     
                     latest_snapshots[instrument_id] = snap;
                     
@@ -278,10 +404,19 @@ struct ScreenerService::Impl {
             query_end - query_start).count();
         
         // Get spot prices for underlyings (for Greek calculations)
+        // Prefer cash/index feed from NSE (exchange=1) over derivatives.
         std::unordered_map<std::string, double> underlying_spots;
         for (auto& [id, snap] : latest_snapshots) {
-            if (snap.instrument_type == InstrumentType::EQ ||
-                snap.instrument_type == InstrumentType::FUT) {
+            if (snap.underlying.empty()) continue;
+            if (snap.exchange == "NSE" && snap.instrument_type == InstrumentType::EQ) {
+                underlying_spots[snap.underlying] = snap.last_price;
+            }
+        }
+        // Fallback to futures (typically NFO) if NSE spot isn't present.
+        for (auto& [id, snap] : latest_snapshots) {
+            if (snap.underlying.empty()) continue;
+            if (underlying_spots.count(snap.underlying)) continue;
+            if (snap.instrument_type == InstrumentType::FUT) {
                 underlying_spots[snap.underlying] = snap.last_price;
             }
         }
@@ -495,7 +630,7 @@ struct ScreenerService::Impl {
               << "instrument_id, tradingsymbol, "
               << "toUnixTimestamp64Milli(exchange_timestamp) as ts_ms, "
               << "last_price, bid_price_0, ask_price_0, "
-              << "total_traded_quantity, open_interest "
+              << "total_traded_quantity, toInt64(0) as open_interest "
               << "FROM " << ch_config.database << "." << table << " "
               << "WHERE exchange_timestamp >= '" << timestamp_to_sql(request.start) << "' "
               << "AND exchange_timestamp <= '" << timestamp_to_sql(request.end) << "' "
@@ -658,6 +793,20 @@ std::vector<Timestamp> ScreenerService::get_available_timestamps(
 
 std::vector<std::string> ScreenerService::get_available_underlyings() {
     std::vector<std::string> result;
+
+    // Prefer a curated list when InstrumentManager is available.
+    // This avoids returning tens of thousands of equity underlyings.
+    if (impl_->instrument_manager && !impl_->instrument_manager->empty()) {
+        static const std::vector<std::string> kCommon = {
+            "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"
+        };
+        auto all = impl_->instrument_manager->get_underlyings();
+        std::unordered_set<std::string> all_set(all.begin(), all.end());
+        for (const auto& u : kCommon) {
+            if (all_set.count(u)) result.push_back(u);
+        }
+        if (!result.empty()) return result;
+    }
     
     std::ostringstream query;
     query << "SELECT DISTINCT "
@@ -668,13 +817,17 @@ std::vector<std::string> ScreenerService::get_available_underlyings() {
           << "ORDER BY underlying "
           << "FORMAT TabSeparated";
     
-    clickhouse_query_stream(impl_->ch_config, query.str(),
-        [&](const std::vector<std::string>& cols) {
-            if (!cols.empty() && !cols[0].empty()) {
-                result.push_back(cols[0]);
-            }
-            return true;
-        });
+    try {
+        clickhouse_query_stream(impl_->ch_config, query.str(),
+            [&](const std::vector<std::string>& cols) {
+                if (!cols.empty() && !cols[0].empty()) {
+                    result.push_back(cols[0]);
+                }
+                return true;
+            });
+    } catch (const std::exception&) {
+        // Swallow ClickHouse errors; fall back below.
+    }
     
     // Fallback if query doesn't work well
     if (result.empty()) {
@@ -689,6 +842,29 @@ std::vector<int64_t> ScreenerService::get_available_expiries(
     Timestamp as_of) {
     
     std::vector<int64_t> result;
+
+    // Prefer instrument master data for expiries; ClickHouse market rows may not include expiry/tradingsymbol.
+    if (impl_->instrument_manager && !impl_->instrument_manager->empty()) {
+        using namespace std::chrono;
+
+        const auto as_of_tp = sys_time<milliseconds>(milliseconds(as_of.count()));
+        const auto as_of_day = floor<days>(as_of_tp);
+
+        std::unordered_set<int64_t> seen;
+        for (const auto* info : impl_->instrument_manager->get_option_chain(underlying)) {
+            if (!info || !info->expiry) continue;
+            auto ms = Impl::expiry_ymd_to_ms(*info->expiry);
+            if (ms <= 0) continue;
+            if (sys_days{*info->expiry} <= as_of_day) continue;
+            seen.insert(ms);
+        }
+        if (!seen.empty()) {
+            result.assign(seen.begin(), seen.end());
+            std::sort(result.begin(), result.end());
+            if (result.size() > 20) result.resize(20);
+            return result;
+        }
+    }
     
     std::ostringstream query;
     query << "SELECT DISTINCT expiry "
@@ -699,15 +875,21 @@ std::vector<int64_t> ScreenerService::get_available_expiries(
           << "LIMIT 20 "
           << "FORMAT TabSeparated";
     
-    clickhouse_query_stream(impl_->ch_config, query.str(),
-        [&](const std::vector<std::string>& cols) {
-            if (!cols.empty()) {
-                try {
-                    result.push_back(std::stoll(cols[0]));
-                } catch (...) {}
-            }
-            return true;
-        });
+    try {
+        clickhouse_query_stream(impl_->ch_config, query.str(),
+            [&](const std::vector<std::string>& cols) {
+                if (!cols.empty()) {
+                    auto expiry_ms = Impl::parse_expiry_ms(cols[0]);
+                    if (expiry_ms > 0) {
+                        result.push_back(expiry_ms);
+                    }
+                }
+                return true;
+            });
+    } catch (const std::exception&) {
+        // ClickHouse down and instrument master didn't have expiries.
+        // Return empty rather than throwing.
+    }
     
     return result;
 }
@@ -731,7 +913,7 @@ void ScreenerService::stream_replay(
           << "instrument_id, tradingsymbol, "
           << "toUnixTimestamp64Milli(exchange_timestamp) as ts_ms, "
           << "last_price, bid_price_0, ask_price_0, "
-          << "total_traded_quantity, open_interest "
+            << "total_traded_quantity, toInt64(0) as open_interest "
           << "FROM " << impl_->ch_config.database << "." << impl_->table << " "
           << "WHERE exchange_timestamp >= '" << impl_->timestamp_to_sql(request.start) << "' "
           << "AND exchange_timestamp <= '" << impl_->timestamp_to_sql(request.end) << "' "
@@ -809,54 +991,114 @@ ScreenerService::OptionChainResult ScreenerService::get_option_chain(
     result.underlying = underlying;
     result.timestamp = timestamp;
     result.expiry_ms = expiry_ms;
+    result.source = "clickhouse";
     
-    // Get spot price
-    ScreenerFilter filter;
-    filter.underlyings = {underlying};
-    filter.include_options = false;
-    filter.include_futures = true;
-    filter.include_equities = true;
-    filter.limit = 10;
-    
-    auto spot_result = get_market_at_timestamp(timestamp, filter);
-    if (!spot_result.instruments.empty()) {
-        result.spot_price = spot_result.instruments[0].last_price;
-    }
-    
-    // Get options
-    filter.include_options = true;
-    filter.include_futures = false;
-    filter.include_equities = false;
-    filter.specific_expiry_ms = expiry_ms;
-    filter.limit = 1000;
-    
-    auto options_result = get_market_at_timestamp(timestamp, filter);
-    
-    // Group by strike
-    std::map<double, OptionChainEntry> chain_map;
-    
-    for (const auto& snap : options_result.instruments) {
-        auto& entry = chain_map[snap.strike];
-        entry.strike = snap.strike;
+    try {
+        // Get spot price
+        ScreenerFilter filter;
+        filter.underlyings = {underlying};
+        filter.include_options = false;
+        filter.include_futures = true;
+        filter.include_equities = true;
+        filter.limit = 10;
         
-        if (snap.option_type == engine::OptionType::Call) {
-            entry.call = snap;
-        } else {
-            entry.put = snap;
+        auto spot_result = get_market_at_timestamp(timestamp, filter);
+        if (!spot_result.instruments.empty()) {
+            result.spot_price = spot_result.instruments[0].last_price;
         }
-    }
-    
-    // Build chain vector and find ATM
-    double min_diff = std::numeric_limits<double>::max();
-    for (auto& [strike, entry] : chain_map) {
-        entry.net_oi = entry.call.open_interest - entry.put.open_interest;
-        entry.net_volume = entry.call.volume - entry.put.volume;
-        result.chain.push_back(entry);
         
-        double diff = std::abs(strike - result.spot_price);
-        if (diff < min_diff) {
-            min_diff = diff;
-            result.atm_strike = strike;
+        // Get options
+        filter.include_options = true;
+        filter.include_futures = false;
+        filter.include_equities = false;
+        filter.specific_expiry_ms = expiry_ms;
+        filter.limit = 1000;
+        
+        auto options_result = get_market_at_timestamp(timestamp, filter);
+        
+        // Group by strike
+        std::map<double, OptionChainEntry> chain_map;
+        
+        for (const auto& snap : options_result.instruments) {
+            auto& entry = chain_map[snap.strike];
+            entry.strike = snap.strike;
+            
+            if (snap.option_type == engine::OptionType::Call) {
+                entry.call = snap;
+            } else {
+                entry.put = snap;
+            }
+        }
+        
+        // Build chain vector and find ATM
+        double min_diff = std::numeric_limits<double>::max();
+        for (auto& [strike, entry] : chain_map) {
+            entry.net_oi = entry.call.open_interest - entry.put.open_interest;
+            entry.net_volume = entry.call.volume - entry.put.volume;
+            result.chain.push_back(entry);
+            
+            double diff = std::abs(strike - result.spot_price);
+            if (diff < min_diff) {
+                min_diff = diff;
+                result.atm_strike = strike;
+            }
+        }
+    } catch (const std::exception& e) {
+        // ClickHouse (market data) is unavailable. Fall back to instrument master
+        // so the UI can still render strikes and contract identities.
+        result.chain.clear();
+        result.spot_price = 0.0;
+        result.atm_strike = 0.0;
+        result.max_pain = 0.0;
+
+        if (impl_->instrument_manager && !impl_->instrument_manager->empty()) {
+            result.source = "instrument_master";
+            result.warning = std::string("ClickHouse unavailable; returning instrument-master chain without prices: ") + e.what();
+
+            using namespace std::chrono;
+            const auto expiry_tp = sys_time<milliseconds>(milliseconds(expiry_ms));
+            const auto expiry_day = floor<days>(expiry_tp);
+            const auto expiry_ymd = year_month_day{expiry_day};
+
+            std::map<double, OptionChainEntry> chain_map;
+            for (const auto* info : impl_->instrument_manager->get_option_chain(underlying)) {
+                if (!info || !info->expiry || !info->strike) continue;
+                if (sys_days{*info->expiry} != expiry_day) continue;
+
+                InstrumentSnapshot snap;
+                snap.instrument_id = impl_->instrument_manager->get_clickhouse_id(info->instrument_token);
+                snap.tradingsymbol = info->tradingsymbol;
+                snap.underlying = info->underlying;
+                snap.exchange = core::exchange_to_string(info->exchange);
+                snap.instrument_type = info->instrument_type;
+                snap.strike = *info->strike;
+                snap.expiry_ms = Impl::expiry_ymd_to_ms(*info->expiry);
+                snap.exchange_timestamp = timestamp;
+                if (snap.instrument_type == InstrumentType::CE) {
+                    snap.option_type = engine::OptionType::Call;
+                } else if (snap.instrument_type == InstrumentType::PE) {
+                    snap.option_type = engine::OptionType::Put;
+                }
+
+                auto& entry = chain_map[snap.strike];
+                entry.strike = snap.strike;
+                if (snap.option_type == engine::OptionType::Call) entry.call = snap;
+                else entry.put = snap;
+            }
+
+            for (auto& [strike, entry] : chain_map) {
+                entry.net_oi = entry.call.open_interest - entry.put.open_interest;
+                entry.net_volume = entry.call.volume - entry.put.volume;
+                result.chain.push_back(entry);
+            }
+
+            if (!result.chain.empty()) {
+                result.atm_strike = result.chain[result.chain.size() / 2].strike;
+            }
+            (void)expiry_ymd;
+        } else {
+            result.source = "none";
+            result.warning = std::string("ClickHouse unavailable and instrument master not loaded: ") + e.what();
         }
     }
     

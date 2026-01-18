@@ -431,7 +431,13 @@ public:
                 .key("timestamp").value(result.timestamp.count())
                 .key("atm_strike").value(result.atm_strike)
                 .key("max_pain").value(result.max_pain)
-                .key("chain").start_array();
+                .key("source").value(result.source.empty() ? "clickhouse" : result.source);
+
+            if (!result.warning.empty()) {
+                json.key("warning").value(result.warning);
+            }
+
+            json.key("chain").start_array();
             
             for (size_t i = 0; i < result.chain.size(); ++i) {
                 if (i > 0) json.next();

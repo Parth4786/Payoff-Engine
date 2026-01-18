@@ -382,6 +382,10 @@ public:
         std::vector<OptionChainEntry> chain;
         double atm_strike;
         double max_pain;
+
+        // Diagnostics / degradation info (non-breaking for consumers)
+        std::string source;                 // "clickhouse" | "instrument_master" | "none"
+        std::string warning;                // human-readable if degraded
     };
     
     OptionChainResult get_option_chain(
