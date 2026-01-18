@@ -85,6 +85,7 @@ add_library(payoff_core STATIC
     # Data sources
     src/datasource/mock_source.cpp
     src/datasource/clickhouse_source.cpp
+    src/datasource/kite_ws_source.cpp
     
     # Kite API client
     src/kite/kite_client.cpp

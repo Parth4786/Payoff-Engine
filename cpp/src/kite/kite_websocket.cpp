@@ -85,17 +85,23 @@ core::DepthSnapshot KiteTick::to_snapshot() const {
     
     // Trade info
     snap.trade.last_price = last_price;
-    snap.trade.last_traded_quantity = 0;  // Not in tick
+    snap.trade.last_traded_quantity = 0;  // Not available in tick
     snap.trade.total_traded_quantity = volume;
     snap.trade.total_buy_quantity = buy_quantity;
     snap.trade.total_sell_quantity = sell_quantity;
+    
+    // OI data - ONLY available from Kite WebSocket (not in ClickHouse)
     snap.trade.open_interest = oi;
+    snap.trade.oi_day_high = oi_day_high;
+    snap.trade.oi_day_low = oi_day_low;
+    
+    // OHLC
     snap.trade.open = open;
     snap.trade.high = high;
     snap.trade.low = low;
     snap.trade.close = close;
     
-    // Depth levels
+    // Depth levels (FULL mode has all 5 levels)
     for (const auto& level : bids) {
         snap.bids.push_back({level.price, level.quantity, level.orders});
     }

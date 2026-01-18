@@ -153,12 +153,26 @@ public:
         }
         
         // Build query - note: instrument_id in ClickHouse = exchange_token
+        // Query ALL 5 depth levels as they exist in tick_data_db.market_data
         std::ostringstream query;
         query << "SELECT instrument_id, tradingsymbol, "
               << "toUnixTimestamp64Milli(exchange_timestamp) as ts_ms, "
-              << "last_price, volume, "
-              << "bid_price, bid_quantity, ask_price, ask_quantity, "
-              << "open_interest "
+              << "last_price, total_traded_quantity, "
+              // Bid depth (5 levels)
+              << "bid_price_0, bid_size_0, bid_orders_0, "
+              << "bid_price_1, bid_size_1, bid_orders_1, "
+              << "bid_price_2, bid_size_2, bid_orders_2, "
+              << "bid_price_3, bid_size_3, bid_orders_3, "
+              << "bid_price_4, bid_size_4, bid_orders_4, "
+              // Ask depth (5 levels)
+              << "ask_price_0, ask_size_0, ask_orders_0, "
+              << "ask_price_1, ask_size_1, ask_orders_1, "
+              << "ask_price_2, ask_size_2, ask_orders_2, "
+              << "ask_price_3, ask_size_3, ask_orders_3, "
+              << "ask_price_4, ask_size_4, ask_orders_4, "
+              // Trade info and OHLC
+              << "total_buy_quantity, total_sell_quantity, "
+              << "open_price, high_price, low_price, close_price "
               << "FROM " << ch_config_.database << "." << table_ << " "
               << "WHERE exchange_timestamp >= '" << ms_to_sql_datetime(range.start.count()) << "' "
               << "AND exchange_timestamp <= '" << ms_to_sql_datetime(range.end.count()) << "' ";
@@ -197,10 +211,13 @@ public:
               << "FORMAT TabSeparated";
         
         // Stream results via shared helper
+        // Expected column count: 2 (id, symbol) + 1 (ts) + 2 (price, volume) + 
+        //                        15 (5 bid levels * 3) + 15 (5 ask levels * 3) + 
+        //                        2 (buy/sell qty) + 4 (OHLC) = 41 columns
         size_t count = 0;
         clickhouse_query_stream(ch_config_, query.str(), 
             [&](const std::vector<std::string>& cols) {
-                if (cols.size() < 10) return true;  // Skip invalid rows
+                if (cols.size() < 41) return true;  // Skip invalid rows
                 
                 DepthSnapshot snap = parse_row_to_snapshot(cols);
                 callback(snap);
@@ -232,12 +249,26 @@ public:
             while (streaming_) {
                 try {
                     // Query for new data since watermark
+                    // Use correct column names from tick_data_db.market_data schema
                     std::ostringstream query;
                     query << "SELECT instrument_id, tradingsymbol, "
                           << "toUnixTimestamp64Milli(exchange_timestamp) as ts_ms, "
-                          << "last_price, volume, "
-                          << "bid_price, bid_quantity, ask_price, ask_quantity, "
-                          << "open_interest "
+                          << "last_price, total_traded_quantity, "
+                          // Bid depth (5 levels)
+                          << "bid_price_0, bid_size_0, bid_orders_0, "
+                          << "bid_price_1, bid_size_1, bid_orders_1, "
+                          << "bid_price_2, bid_size_2, bid_orders_2, "
+                          << "bid_price_3, bid_size_3, bid_orders_3, "
+                          << "bid_price_4, bid_size_4, bid_orders_4, "
+                          // Ask depth (5 levels)
+                          << "ask_price_0, ask_size_0, ask_orders_0, "
+                          << "ask_price_1, ask_size_1, ask_orders_1, "
+                          << "ask_price_2, ask_size_2, ask_orders_2, "
+                          << "ask_price_3, ask_size_3, ask_orders_3, "
+                          << "ask_price_4, ask_size_4, ask_orders_4, "
+                          // Trade info and OHLC
+                          << "total_buy_quantity, total_sell_quantity, "
+                          << "open_price, high_price, low_price, close_price "
                           << "FROM " << ch_config_.database << "." << table_ << " "
                           << "WHERE toUnixTimestamp64Milli(exchange_timestamp) > " << watermark_ << " ";
                     
@@ -265,10 +296,10 @@ public:
                           << "LIMIT " << batch_size << " "
                           << "FORMAT TabSeparated";
                     
-                    // Stream using shared helper
+                    // Stream using shared helper (41 columns expected)
                     clickhouse_query_stream(ch_config_, query.str(),
                         [&](const std::vector<std::string>& cols) {
-                            if (cols.size() < 10) return true;
+                            if (cols.size() < 41) return true;
                             
                             DepthSnapshot snap = parse_row_to_snapshot(cols);
                             
@@ -341,17 +372,28 @@ private:
     DepthSnapshot parse_row_to_snapshot(const std::vector<std::string>& cols) const {
         DepthSnapshot snap;
         
-        // Expected columns:
-        // 0: instrument_id (= exchange_token in our model)
+        // Expected 41 columns from tick_data_db.market_data:
+        // 0: instrument_id (= exchange_token)
         // 1: tradingsymbol
-        // 2: ts_ms
+        // 2: ts_ms (exchange_timestamp as milliseconds)
         // 3: last_price
-        // 4: volume
-        // 5: bid_price
-        // 6: bid_quantity
-        // 7: ask_price
-        // 8: ask_quantity
-        // 9: open_interest
+        // 4: total_traded_quantity
+        // 5-7:   bid_price_0, bid_size_0, bid_orders_0
+        // 8-10:  bid_price_1, bid_size_1, bid_orders_1
+        // 11-13: bid_price_2, bid_size_2, bid_orders_2
+        // 14-16: bid_price_3, bid_size_3, bid_orders_3
+        // 17-19: bid_price_4, bid_size_4, bid_orders_4
+        // 20-22: ask_price_0, ask_size_0, ask_orders_0
+        // 23-25: ask_price_1, ask_size_1, ask_orders_1
+        // 26-28: ask_price_2, ask_size_2, ask_orders_2
+        // 29-31: ask_price_3, ask_size_3, ask_orders_3
+        // 32-34: ask_price_4, ask_size_4, ask_orders_4
+        // 35: total_buy_quantity
+        // 36: total_sell_quantity
+        // 37: open_price
+        // 38: high_price
+        // 39: low_price
+        // 40: close_price
         
         try {
             // instrument_id from ClickHouse IS the exchange_token
@@ -376,21 +418,44 @@ private:
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count());
             
+            // Trade info
             snap.trade.last_price = std::stod(cols[3]);
             snap.trade.total_traded_quantity = std::stoll(cols[4]);
-            snap.trade.open_interest = std::stoll(cols[9]);
+            snap.trade.total_buy_quantity = std::stoll(cols[35]);
+            snap.trade.total_sell_quantity = std::stoll(cols[36]);
             
-            // Best bid/ask
-            double bid_price = std::stod(cols[5]);
-            int64_t bid_qty = std::stoll(cols[6]);
-            double ask_price = std::stod(cols[7]);
-            int64_t ask_qty = std::stoll(cols[8]);
+            // OHLC
+            snap.trade.open = std::stod(cols[37]);
+            snap.trade.high = std::stod(cols[38]);
+            snap.trade.low = std::stod(cols[39]);
+            snap.trade.close = std::stod(cols[40]);
             
-            if (bid_price > 0) {
-                snap.bids.push_back({bid_price, bid_qty, 1});
+            // NOTE: OI is NOT available in historical ClickHouse data
+            // OI is only available from Kite WebSocket live stream
+            snap.trade.open_interest = 0;
+            
+            // Parse all 5 bid levels (cols 5-19)
+            for (int i = 0; i < 5; ++i) {
+                int base = 5 + (i * 3);
+                double price = std::stod(cols[base]);
+                int64_t size = std::stoll(cols[base + 1]);
+                int32_t orders = static_cast<int32_t>(std::stol(cols[base + 2]));
+                
+                if (price > 0) {
+                    snap.bids.push_back({price, size, orders});
+                }
             }
-            if (ask_price > 0) {
-                snap.asks.push_back({ask_price, ask_qty, 1});
+            
+            // Parse all 5 ask levels (cols 20-34)
+            for (int i = 0; i < 5; ++i) {
+                int base = 20 + (i * 3);
+                double price = std::stod(cols[base]);
+                int64_t size = std::stoll(cols[base + 1]);
+                int32_t orders = static_cast<int32_t>(std::stol(cols[base + 2]));
+                
+                if (price > 0) {
+                    snap.asks.push_back({price, size, orders});
+                }
             }
             
             snap.source = Source::ClickHouse;

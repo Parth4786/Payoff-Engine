@@ -137,7 +137,7 @@ public:
 };
 
 // ============================================================================
-// Factory
+// Factory - ClickHouse (Historical Replay + Polling)
 // ============================================================================
 std::unique_ptr<MarketDataSource> create_mock_source();
 std::unique_ptr<MarketDataSource> create_clickhouse_source(
@@ -145,5 +145,26 @@ std::unique_ptr<MarketDataSource> create_clickhouse_source(
     uint16_t port,
     const std::string& database);
 std::unique_ptr<MarketDataSource> create_clickhouse_source_from_config();
+
+// ============================================================================
+// Factory - Kite WebSocket (Live Streaming with OI)
+// ============================================================================
+
+/**
+ * @brief Create Kite WebSocket data source from config
+ * 
+ * Features:
+ * - Live market data with full depth (5 levels)
+ * - Open Interest data (oi, oi_day_high, oi_day_low) - ONLY source for OI
+ * - No replay capability (use ClickHouse for historical)
+ */
+std::unique_ptr<MarketDataSource> create_kite_ws_source();
+
+/**
+ * @brief Create Kite WebSocket data source with credentials
+ */
+std::unique_ptr<MarketDataSource> create_kite_ws_source(
+    const std::string& api_key,
+    const std::string& access_token);
 
 } // namespace payoff::core

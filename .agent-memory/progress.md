@@ -1,12 +1,94 @@
 # Payoff Engine - C++ Backend Implementation Progress
 
-## Current Status: ✅ BUILD SUCCESSFUL | BACKEND FULLY READY FOR FRONTEND
+## Current Status: ✅ BUILD SUCCESSFUL | TESTS PASSING | BACKEND FULLY READY FOR FRONTEND
 
 ### LATEST UPDATE - January 18, 2026
 
-**Session Goal:** Add screener service for robust backend-frontend integration
+**Session Goal:** Architecture review - Fix data source implementations
 
-**NEW: Screener Service Added ✅**
+## COMPLETED THIS SESSION ✅
+
+### 0. Fixed Runtime DLL Issue (Static Linking)
+- Executable was silently crashing with error `0xC0000139` (Entry Point Not Found)
+- Root cause: Dynamic linking required MinGW runtime DLLs not in PATH
+- **Solution**: Rebuilt with static linking flags in CMake
+  ```cmake
+  cmake -DCMAKE_EXE_LINKER_FLAGS="-static" \
+        -DCMAKE_CXX_FLAGS="-static-libgcc -static-libstdc++" ..
+  ```
+- **Test Results**: 29/32 passed (3 expected failures = no .env config)
+- **Files Changed**: CMake reconfigure (not CMakeLists.txt)
+
+### 1. Fixed ClickHouse Source - Full 5-Level Depth
+- Updated query to use correct column names: `bid_price_0..4`, `bid_size_0..4`, etc.
+- Now reads ALL 5 depth levels (was only reading 1 level)
+- Added OHLC and volume fields
+- **Files Changed**: `src/datasource/clickhouse_source.cpp`
+
+### 2. Updated TradeInfo Model for OI Data
+- Added `oi_day_high`, `oi_day_low` fields (Kite FULL mode only)
+- Added `average_traded_price` field
+- Changed `oi_timestamp` → `exchange_timestamp`
+- Added `has_oi()` helper method
+- **Files Changed**: `include/core/models.hpp`
+
+### 3. Created KiteWSDataSource Adapter
+- New `KiteWSDataSource` implements `MarketDataSource` interface
+- Wires Kite WebSocket into unified data pipeline
+- Handles instrument_token ↔ exchange_token mapping
+- OI data populated from live ticks
+- **Files Added**: `src/datasource/kite_ws_source.cpp`
+- **Files Changed**: `include/core/datasource.hpp`, `CMakeLists.txt`
+
+### 4. Updated Kite WebSocket Snapshot Conversion
+- Now populates `oi_day_high`, `oi_day_low` from tick data
+- **Files Changed**: `src/kite/kite_websocket.cpp`
+
+## CRITICAL ARCHITECTURE NOTES
+
+### Data Sources
+1. **ClickHouse** (`tick_data_db.market_data`): Historical tick data
+   - Has: `instrument_id`, `tradingsymbol`, `expiry`, `strike`, 5-level depth
+   - **NO** `open_interest` column - OI is Kite-live only
+   - Query in screener uses `tradingsymbol LIKE 'NIFTY%'` for filtering
+   
+2. **Historical Instrument Tables** (to be used):
+   - `instruments_nse` - NSE instrument master dumps
+   - `instruments_nfo` - NFO instrument master dumps  
+   - `xts_master` - XTS instrument master (partial)
+   
+3. **Live Instrument Source**:
+   - Kite CSV files in `KITE_INSTRUMENT_MASTER_DIR`
+   - Downloaded daily via `KiteClient::get_instruments()`
+
+### OI Data Status - IMPORTANT
+- **Kite Live (Full mode)**: ✅ Has OI (`oi`, `oi_day_high`, `oi_day_low`)
+- **ClickHouse historical**: ❌ NO OI data (column doesn't exist)
+
+### Data Source Usage Pattern
+```cpp
+// Historical replay - ClickHouse (no OI)
+auto ch_source = create_clickhouse_source_from_config();
+ch_source->replay_snapshots(symbols, range, callback);
+
+// Live streaming - Kite WebSocket (with OI)
+auto kite_source = create_kite_ws_source();
+kite_source->subscribe(symbols);
+kite_source->start_streaming(callback, error_callback);
+```
+
+### Option Chain Resolution
+1. **Live**: `InstrumentManager::get_option_chain(underlying, expiry)` 
+   - Uses `by_underlying_` multimap index
+   - Filters by `is_option()` and optional `expiry`
+   
+2. **Historical**: Current screener queries `tradingsymbol LIKE 'NIFTY%'`
+   - Works because `tradingsymbol` is denormalized in market_data
+   - For proper join: Use `instruments_nfo` table
+
+---
+
+**PREVIOUS: Screener Service Added ✅**
 
 All heavy computation handled server-side - frontend just renders:
 

@@ -76,7 +76,15 @@ struct TradeInfo {
     int64_t total_traded_quantity = 0;    // Total volume for the day
     int64_t total_buy_quantity = 0;
     int64_t total_sell_quantity = 0;
+    
+    // Open Interest - ONLY available from Kite WebSocket live stream
+    // ClickHouse historical data does NOT have OI
     int64_t open_interest = 0;
+    int64_t oi_day_high = 0;              // Kite FULL mode only
+    int64_t oi_day_low = 0;               // Kite FULL mode only
+    
+    // Average traded price
+    double average_traded_price = 0.0;
     
     // OHLC for the day
     double open = 0.0;
@@ -86,10 +94,14 @@ struct TradeInfo {
     
     // Timestamps
     std::optional<Timestamp> last_trade_time;
-    std::optional<Timestamp> oi_timestamp;
+    std::optional<Timestamp> exchange_timestamp;
     
     constexpr bool has_trade() const noexcept {
         return last_price > 0.0;
+    }
+    
+    constexpr bool has_oi() const noexcept {
+        return open_interest > 0;
     }
 };
 
