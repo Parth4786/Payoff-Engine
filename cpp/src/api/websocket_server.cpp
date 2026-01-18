@@ -11,6 +11,9 @@
  * For production, use a library like websocketpp or Beast
  */
 
+#include "api/websocket_server.hpp"
+#include "core/models.hpp"
+
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -234,6 +237,38 @@ public:
             .key("vega").value(vega)
             .end_object();
         
+        broadcast(json.str());
+    }
+    
+    void broadcast_depth_snapshot(const core::DepthSnapshot& snap) {
+        WSJsonBuilder json;
+        json.start_object()
+            .key("type").value("depth_snapshot")
+            .key("symbol").value(snap.symbol)
+            .key("instrument_id").value(static_cast<int64_t>(snap.instrument_id))
+            .key("ltp").value(snap.trade.last_price)
+            .key("volume").value(static_cast<int64_t>(snap.trade.total_traded_quantity))
+            .key("oi").value(static_cast<int64_t>(snap.trade.open_interest))
+            .key("open").value(snap.trade.open)
+            .key("high").value(snap.trade.high)
+            .key("low").value(snap.trade.low)
+            .key("close").value(snap.trade.close)
+            .key("buy_qty").value(static_cast<int64_t>(snap.trade.total_buy_quantity))
+            .key("sell_qty").value(static_cast<int64_t>(snap.trade.total_sell_quantity))
+            .key("exchange_ts").value(snap.exchange_timestamp.count())
+            .key("receive_ts").value(snap.receive_timestamp.count());
+        
+        // Add best bid/ask
+        if (!snap.bids.empty()) {
+            json.key("bid").value(snap.bids[0].price)
+                .key("bid_qty").value(static_cast<int64_t>(snap.bids[0].quantity));
+        }
+        if (!snap.asks.empty()) {
+            json.key("ask").value(snap.asks[0].price)
+                .key("ask_qty").value(static_cast<int64_t>(snap.asks[0].quantity));
+        }
+        
+        json.end_object();
         broadcast(json.str());
     }
     
@@ -550,6 +585,19 @@ void broadcast_greeks(double spot, double strike, const std::string& type,
     if (g_ws_server) {
         g_ws_server->broadcast_greeks(spot, strike, type, delta, gamma, theta, vega);
     }
+}
+
+void broadcast_depth_snapshot(const core::DepthSnapshot& snapshot) {
+    if (g_ws_server) {
+        g_ws_server->broadcast_depth_snapshot(snapshot);
+    }
+}
+
+size_t websocket_client_count() {
+    if (g_ws_server) {
+        return g_ws_server->client_count();
+    }
+    return 0;
 }
 
 } // namespace payoff::api

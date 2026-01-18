@@ -14,6 +14,7 @@
  */
 
 #include "api/http_server.hpp"
+#include "api/websocket_server.hpp"
 #include "core/config.hpp"
 #include "core/models.hpp"
 #include "core/instrument_manager.hpp"
@@ -951,6 +952,14 @@ void start_rest_server(int port) {
         init_live_data_service(instrument_manager, market_cache);
         setup_live_routes(server);
     }
+    
+    // ========================================================================
+    // WebSocket Server for Frontend
+    // ========================================================================
+    int ws_port = cfg.get_int("WS_PORT", 8081);
+    std::cout << "\n[WebSocket] Starting WebSocket server on port " << ws_port << "...\n";
+    start_websocket_server(ws_port);
+    std::cout << "[WebSocket] ✓ Frontend can connect to ws://localhost:" << ws_port << "\n";
     
     std::cout << "\nStarting REST API server on port " << port << std::endl;
     std::cout << "Screener endpoints available at /api/screener/*" << std::endl;

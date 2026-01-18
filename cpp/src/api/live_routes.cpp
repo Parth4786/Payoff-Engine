@@ -19,6 +19,7 @@
 #include "core/instrument_manager.hpp"
 #include "core/http_client.hpp"
 #include "core/config.hpp"
+#include "api/websocket_server.hpp"
 #include "cache/market_cache.hpp"
 
 #include <chrono>
@@ -194,11 +195,14 @@ void init_live_data_service(
     g_subscription_manager = kite::create_subscription_manager(
         g_instrument_manager, config);
     
-    // Set up snapshot callback to update market cache
+    // Set up snapshot callback to update market cache AND broadcast to WebSocket clients
     g_subscription_manager->on_snapshot([](const core::DepthSnapshot& snap) {
+        // Update local cache
         if (g_market_cache) {
             g_market_cache->update(snap);
         }
+        // Broadcast to frontend WebSocket clients
+        broadcast_depth_snapshot(snap);
     });
     
     g_subscription_manager->on_error([](const std::string& symbol, const std::string& error) {
